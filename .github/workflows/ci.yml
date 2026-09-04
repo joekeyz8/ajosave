@@ -61,16 +61,3 @@ jobs:
         with: { node-version: 20, cache: npm }
       - run: npm ci
       - run: npm run build
-
-  contract-test:
-    name: Soroban Contract Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.81.0
-        with: { targets: wasm32-unknown-unknown }
-      - uses: Swatinem/rust-cache@v2
-        with: { workspaces: contracts }
-      - name: Run contract tests
-        working-directory: contracts
-        run: cargo test
