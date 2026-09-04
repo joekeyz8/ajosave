@@ -1,5 +1,8 @@
 "use client";
 
+// Prevent static prerender — next-auth requires NEXTAUTH_URL at runtime
+export const dynamic = "force-dynamic";
+
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";

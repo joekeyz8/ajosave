@@ -9,6 +9,8 @@ jobs:
     name: Deploy
     runs-on: ubuntu-latest
     environment: production
+    # Skip entire job if Vercel secrets are not configured
+    if: ${{ vars.NEXT_PUBLIC_APP_URL != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,6 +36,7 @@ jobs:
           REDIS_URL: ${{ secrets.REDIS_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
       - name: Deploy to Vercel
+        if: ${{ secrets.VERCEL_TOKEN != '' }}
         uses: amondnet/vercel-action@v25
         with:
           vercel-token: ${{ secrets.VERCEL_TOKEN }}
