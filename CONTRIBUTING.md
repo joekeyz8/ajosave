@@ -5,7 +5,7 @@ Thank you for your interest! STELLAR is open-source and we welcome all contribut
 ## Setup
 
 ```bash
-git clone https://github.com/jessicanath/stellar.git
+git clone https://github.com/joekeyz8/ajosave.git
 cd stellar
 npm install
 cp .env.example .env.local
