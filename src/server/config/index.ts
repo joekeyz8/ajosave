@@ -1,7 +1,7 @@
 export const serverConfig = {
   app: {
     url: process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
-    name: process.env.NEXT_PUBLIC_APP_NAME ?? "Ajosave",
+    name: process.env.NEXT_PUBLIC_APP_NAME ?? "STELLAR",
   },
   stellar: {
     network: (process.env.STELLAR_NETWORK ?? "testnet") as "testnet" | "mainnet",
@@ -28,7 +28,7 @@ export const serverConfig = {
   },
   termii: {
     apiKey: process.env.TERMII_API_KEY ?? "",
-    senderId: process.env.TERMII_SENDER_ID ?? "Ajosave",
+    senderId: process.env.TERMII_SENDER_ID ?? "STELLAR",
   },
   resend: {
     apiKey: process.env.RESEND_API_KEY ?? "",

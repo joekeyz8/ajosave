@@ -1,21 +1,19 @@
-# Ajosave
+# STELLAR
 
 > **Trustless rotating savings circles (Ajo/Esusu) on the Stellar blockchain.**  
 > The traditional West African savings group — now with smart contracts, no middleman, automatic payouts.
 
-[![CI](https://github.com/JosephOnuh/ajosave/actions/workflows/ci.yml/badge.svg)](https://github.com/JosephOnuh/ajosave/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/JosephOnuh/ajosave/branch/main/graph/badge.svg)](https://codecov.io/gh/JosephOnuh/ajosave)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Built on Stellar](https://img.shields.io/badge/Built%20on-Stellar-blue)](https://stellar.org)
 [![Soroban](https://img.shields.io/badge/Smart%20Contracts-Soroban-blueviolet)](https://developers.stellar.org/docs/build/smart-contracts)
 
 ---
 
-## What is Ajosave?
+## What is STELLAR?
 
 Ajo (also called Esusu or Susu) is a traditional rotating savings group practiced across West Africa and the diaspora. A group of people each contribute a fixed amount every cycle, and one member takes the full pot each round until everyone has received their payout.
 
-Today this runs entirely on trust — no contracts, no guarantees, frequent fraud. **Ajosave puts it on-chain.**
+Today this runs entirely on trust — no contracts, no guarantees, frequent fraud. **STELLAR puts it on-chain.**
 
 **Who is it for?**
 - Nigerians and West Africans running savings circles domestically and in the diaspora
@@ -121,8 +119,8 @@ The Ajo contract (`contracts/ajo/`) handles the full circle lifecycle:
 ### Installation
 
 ```bash
-git clone https://github.com/JosephOnuh/ajosave.git
-cd ajosave
+git clone https://github.com/jessicanath/stellar.git
+cd stellar
 npm install
 cp .env.example .env.local
 # Fill in environment variables
@@ -136,23 +134,6 @@ npm run contract:build   # Build WASM
 npm run contract:test    # Run Rust tests
 STELLAR_NETWORK=testnet npm run contract:deploy
 ```
-
-#### Testnet Deployment
-
-The Ajo contract is deployed on **Stellar Testnet**:
-
-| Field | Value |
-|-------|-------|
-| Network | Stellar Testnet |
-| Contract ID | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
-| Explorer | [View on Stellar Expert](https://stellar.expert/explorer/testnet/contract/CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC) |
-
-Set in your environment:
-```
-STELLAR_AJO_CONTRACT_ID=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
-```
-
-> CI automatically re-deploys the contract to testnet on every merge to `main` via the `deploy-contract-testnet` job.
 
 ---
 
@@ -171,14 +152,12 @@ STELLAR_AJO_CONTRACT_ID=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 
-See [CHANGELOG.md](CHANGELOG.md) for a full history of changes.
-
 - Bugs → [Bug Report](.github/ISSUE_TEMPLATE/bug_report.md)
 - Features → [Feature Request](.github/ISSUE_TEMPLATE/feature_request.md)
-- Security → **security@ajosave.app**
+- Security → **security@stellar.app**
 
 ---
 
 ## License
 
-[MIT](LICENSE) © 2024 Ajosave
+[MIT](LICENSE) © 2024 STELLAR

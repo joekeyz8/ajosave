@@ -4,7 +4,7 @@
 
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Email **security@ajosave.app** with:
+Email **security@stellar.app** with:
 1. Description of the vulnerability
 2. Steps to reproduce
 3. Potential impact

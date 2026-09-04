@@ -18,7 +18,7 @@ jobs:
         run: npm run build
         env:
           NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
-          NEXT_PUBLIC_APP_NAME: Ajosave
+          NEXT_PUBLIC_APP_NAME: STELLAR
           NEXTAUTH_URL: ${{ vars.NEXTAUTH_URL }}
           NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
