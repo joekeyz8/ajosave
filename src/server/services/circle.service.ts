@@ -10,10 +10,7 @@ export const ngnToUsdc = (ngn: number) => (ngn / NGN_PER_USDC).toFixed(7);
 const circles = new Map<string, Circle>();
 const members = new Map<string, Member[]>(); // circleId → members
 
-export async function createCircle(
-  creatorId: string,
-  input: CreateCircleInput
-): Promise<Circle> {
+export async function createCircle(creatorId: string, input: CreateCircleInput): Promise<Circle> {
   const id = randomUUID();
   const circle: Circle = {
     id,
@@ -51,10 +48,7 @@ export async function getCirclesByUser(userId: string): Promise<Circle[]> {
   );
 }
 
-export async function joinCircle(
-  circleId: string,
-  userId: string
-): Promise<Member> {
+export async function joinCircle(circleId: string, userId: string): Promise<Member> {
   const circle = circles.get(circleId);
   if (!circle) throw new Error("Circle not found");
   if (circle.status !== "open") throw new Error("Circle is not open for joining");

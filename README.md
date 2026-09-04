@@ -16,6 +16,7 @@ Ajo (also called Esusu or Susu) is a traditional rotating savings group practice
 Today this runs entirely on trust — no contracts, no guarantees, frequent fraud. **STELLAR puts it on-chain.**
 
 **Who is it for?**
+
 - Nigerians and West Africans running savings circles domestically and in the diaspora
 - Anyone who wants a disciplined, community-based savings mechanism with zero counterparty risk
 
@@ -48,16 +49,16 @@ Today this runs entirely on trust — no contracts, no guarantees, frequent frau
 
 ### Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Frontend | Next.js 14 (App Router), TypeScript, Vanilla CSS |
-| Backend | Next.js Route Handlers, server services layer |
-| Blockchain | Stellar, Soroban smart contracts (Rust) |
-| Stablecoin | USDC on Stellar |
-| Payments | Paystack (NGN on-ramp) |
-| SMS/OTP | Termii |
-| Database | PostgreSQL |
-| Cache/Queue | Redis |
+| Layer       | Technology                                       |
+| ----------- | ------------------------------------------------ |
+| Frontend    | Next.js 14 (App Router), TypeScript, Vanilla CSS |
+| Backend     | Next.js Route Handlers, server services layer    |
+| Blockchain  | Stellar, Soroban smart contracts (Rust)          |
+| Stablecoin  | USDC on Stellar                                  |
+| Payments    | Paystack (NGN on-ramp)                           |
+| SMS/OTP     | Termii                                           |
+| Database    | PostgreSQL                                       |
+| Cache/Queue | Redis                                            |
 
 ---
 
@@ -97,14 +98,14 @@ scripts/
 
 The Ajo contract (`contracts/ajo/`) handles the full circle lifecycle:
 
-| Function | Description |
-|----------|-------------|
-| `initialize` | Set up circle params (members, amount, frequency) |
-| `join` | Member joins and locks first contribution |
-| `contribute` | Member pays for current cycle |
-| `payout` | Admin triggers rotation payout after cycle time |
-| `get_state` | Read current cycle, next payout time, completion |
-| `get_members` | List all member addresses |
+| Function      | Description                                       |
+| ------------- | ------------------------------------------------- |
+| `initialize`  | Set up circle params (members, amount, frequency) |
+| `join`        | Member joins and locks first contribution         |
+| `contribute`  | Member pays for current cycle                     |
+| `payout`      | Admin triggers rotation payout after cycle time   |
+| `get_state`   | Read current cycle, next payout time, completion  |
+| `get_members` | List all member addresses                         |
 
 ---
 

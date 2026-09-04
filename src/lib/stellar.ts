@@ -32,7 +32,9 @@ export async function getUsdcBalance(publicKey: string): Promise<string> {
   try {
     const account = await server.loadAccount(publicKey);
     const bal = account.balances.find(
-      (b) => b.asset_type !== "native" && (b as { asset_code: string }).asset_code === serverConfig.usdc.assetCode
+      (b) =>
+        b.asset_type !== "native" &&
+        (b as { asset_code: string }).asset_code === serverConfig.usdc.assetCode
     );
     return bal?.balance ?? "0";
   } catch {

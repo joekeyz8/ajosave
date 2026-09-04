@@ -12,15 +12,28 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
     const inputId = id ?? label?.toLowerCase().replace(/\s+/g, "-");
     return (
       <div className="input-group">
-        {label && <label className="input-label" htmlFor={inputId}>{label}</label>}
+        {label && (
+          <label className="input-label" htmlFor={inputId}>
+            {label}
+          </label>
+        )}
         <input
-          ref={ref} id={inputId}
+          ref={ref}
+          id={inputId}
           className={clsx("input", error && "input--error", className)}
           aria-invalid={!!error}
           {...props}
         />
-        {hint && !error && <span className="input-error-msg" style={{ color: "var(--color-text-muted)" }}>{hint}</span>}
-        {error && <span className="input-error-msg" role="alert">{error}</span>}
+        {hint && !error && (
+          <span className="input-error-msg" style={{ color: "var(--color-text-muted)" }}>
+            {hint}
+          </span>
+        )}
+        {error && (
+          <span className="input-error-msg" role="alert">
+            {error}
+          </span>
+        )}
       </div>
     );
   }

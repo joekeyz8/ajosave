@@ -23,9 +23,7 @@ export async function processCyclePayout(
   if (circle.status !== "active") throw new Error("Circle is not active");
 
   const circleMembers = await getMembersByCircle(circleId);
-  const totalPot = (
-    parseFloat(circle.contributionUsdc) * circleMembers.length
-  ).toFixed(7);
+  const totalPot = (parseFloat(circle.contributionUsdc) * circleMembers.length).toFixed(7);
 
   const txHash = await sendUsdcPayment(recipientStellarKey, totalPot);
 

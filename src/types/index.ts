@@ -17,13 +17,13 @@ export interface Circle {
   id: string;
   name: string;
   creatorId: string;
-  contributionUsdc: string;   // per-member per-cycle amount
+  contributionUsdc: string; // per-member per-cycle amount
   contributionNgn: number;
   maxMembers: number;
   cycleFrequency: CycleFrequency;
   status: CircleStatus;
-  contractId?: string;        // deployed Soroban circle contract
-  currentCycle: number;       // 1-indexed
+  contractId?: string; // deployed Soroban circle contract
+  currentCycle: number; // 1-indexed
   nextPayoutAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -36,7 +36,7 @@ export interface Member {
   id: string;
   circleId: string;
   userId: string;
-  position: number;           // payout order (1 = first to receive)
+  position: number; // payout order (1 = first to receive)
   status: MemberStatus;
   hasReceivedPayout: boolean;
   joinedAt: Date;

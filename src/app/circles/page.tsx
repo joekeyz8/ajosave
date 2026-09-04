@@ -14,13 +14,17 @@ export default async function CirclesPage() {
       <div className="container">
         <div className={styles.header}>
           <h1 className={styles.title}>Open Circles</h1>
-          <Link href="/circles/create" className="btn btn--accent">+ New Circle</Link>
+          <Link href="/circles/create" className="btn btn--accent">
+            + New Circle
+          </Link>
         </div>
 
         {circles.length === 0 ? (
           <div className={styles.empty}>
             <p>No open circles yet.</p>
-            <Link href="/circles/create" className="btn btn--primary">Be the first to create one</Link>
+            <Link href="/circles/create" className="btn btn--primary">
+              Be the first to create one
+            </Link>
           </div>
         ) : (
           <div className={styles.grid}>

@@ -14,7 +14,11 @@ export function CreateCircleForm() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { register, handleSubmit, formState: { errors } } = useForm<CreateCircleInput>({
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<CreateCircleInput>({
     resolver: zodResolver(createCircleSchema),
     defaultValues: { cycleFrequency: "monthly" },
   });
@@ -42,19 +46,35 @@ export function CreateCircleForm() {
     <form className={styles.form} onSubmit={handleSubmit(onSubmit)} noValidate>
       <h2 className={styles.title}>Create a Circle</h2>
 
-      <Input label="Circle Name" placeholder="e.g. Lagos Girls Monthly Ajo"
-        error={errors.name?.message} {...register("name")} />
+      <Input
+        label="Circle Name"
+        placeholder="e.g. Lagos Girls Monthly Ajo"
+        error={errors.name?.message}
+        {...register("name")}
+      />
 
-      <Input label="Contribution Amount (₦)" type="number" placeholder="10000"
+      <Input
+        label="Contribution Amount (₦)"
+        type="number"
+        placeholder="10000"
         error={errors.contributionNgn?.message}
-        {...register("contributionNgn", { valueAsNumber: true })} />
+        {...register("contributionNgn", { valueAsNumber: true })}
+      />
 
-      <Input label="Number of Members" type="number" placeholder="5" min={2} max={20}
+      <Input
+        label="Number of Members"
+        type="number"
+        placeholder="5"
+        min={2}
+        max={20}
         error={errors.maxMembers?.message}
-        {...register("maxMembers", { valueAsNumber: true })} />
+        {...register("maxMembers", { valueAsNumber: true })}
+      />
 
       <div className="input-group">
-        <label className="input-label" htmlFor="cycleFrequency">Cycle Frequency</label>
+        <label className="input-label" htmlFor="cycleFrequency">
+          Cycle Frequency
+        </label>
         <select id="cycleFrequency" className="input" {...register("cycleFrequency")}>
           <option value="weekly">Weekly</option>
           <option value="biweekly">Bi-weekly</option>
@@ -64,7 +84,9 @@ export function CreateCircleForm() {
 
       {error && <p className={styles.error}>{error}</p>}
 
-      <Button type="submit" fullWidth loading={loading}>Create Circle</Button>
+      <Button type="submit" fullWidth loading={loading}>
+        Create Circle
+      </Button>
     </form>
   );
 }

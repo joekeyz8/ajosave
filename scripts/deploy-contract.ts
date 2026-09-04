@@ -4,12 +4,12 @@ import * as fs from "fs";
 import * as path from "path";
 
 const network = process.env.STELLAR_NETWORK ?? "testnet";
-const rpcUrl = network === "mainnet"
-  ? "https://soroban-rpc.stellar.org"
-  : "https://soroban-testnet.stellar.org";
-const passphrase = network === "mainnet"
-  ? "Public Global Stellar Network ; September 2015"
-  : "Test SDF Network ; September 2015";
+const rpcUrl =
+  network === "mainnet" ? "https://soroban-rpc.stellar.org" : "https://soroban-testnet.stellar.org";
+const passphrase =
+  network === "mainnet"
+    ? "Public Global Stellar Network ; September 2015"
+    : "Test SDF Network ; September 2015";
 
 const wasmPath = path.resolve(
   __dirname,

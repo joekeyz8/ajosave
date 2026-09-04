@@ -21,13 +21,17 @@ export default async function DashboardPage() {
       <div className="container">
         <div className={styles.header}>
           <h1 className={styles.title}>My Circles</h1>
-          <Link href="/circles/create" className="btn btn--accent">+ New Circle</Link>
+          <Link href="/circles/create" className="btn btn--accent">
+            + New Circle
+          </Link>
         </div>
 
         {circles.length === 0 ? (
           <div className={styles.empty}>
             <p>You haven&apos;t joined any circles yet.</p>
-            <Link href="/circles" className="btn btn--primary">Browse open circles</Link>
+            <Link href="/circles" className="btn btn--primary">
+              Browse open circles
+            </Link>
           </div>
         ) : (
           <div className={styles.grid}>

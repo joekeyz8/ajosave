@@ -26,7 +26,9 @@ export function CircleCard({ circle, members, showJoin = false }: CircleCardProp
       </div>
 
       <div className={styles.meta}>
-        <span>{members.length} / {circle.maxMembers} members</span>
+        <span>
+          {members.length} / {circle.maxMembers} members
+        </span>
         {circle.nextPayoutAt && (
           <span>Next payout: {format(new Date(circle.nextPayoutAt), "MMM d, yyyy")}</span>
         )}
