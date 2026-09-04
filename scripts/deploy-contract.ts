@@ -13,7 +13,7 @@ const passphrase = network === "mainnet"
 
 const wasmPath = path.resolve(
   __dirname,
-  "../contracts/target/wasm32-unknown-unknown/release/ajosave_ajo.wasm"
+  "../contracts/target/wasm32-unknown-unknown/release/stellar_ajo.wasm"
 );
 
 if (!fs.existsSync(wasmPath)) {

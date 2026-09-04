@@ -119,7 +119,7 @@ The Ajo contract (`contracts/ajo/`) handles the full circle lifecycle:
 ### Installation
 
 ```bash
-git clone https://github.com/jessicanath/stellar.git
+git clone https://github.com/joekeyz8/ajosave.git
 cd stellar
 npm install
 cp .env.example .env.local

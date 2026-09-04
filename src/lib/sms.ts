@@ -8,7 +8,7 @@ export async function sendOtp(phone: string): Promise<string> {
   await client.post("/sms/send", {
     to: phone,
     from: serverConfig.termii.senderId,
-    sms: `Your Ajosave verification code is: ${otp}. Valid for 10 minutes.`,
+    sms: `Your STELLAR verification code is: ${otp}. Valid for 10 minutes.`,
     type: "plain",
     channel: "generic",
     api_key: serverConfig.termii.apiKey,
