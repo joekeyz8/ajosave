@@ -38,6 +38,65 @@ jobs:
       - uses: codecov/codecov-action@v4
         with: { token: "${{ secrets.CODECOV_TOKEN }}", fail_ci_if_error: false }
 
+  property-tests:
+    name: Property-Based API Tests (#93)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: stellar_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://user:password@localhost:5432/stellar_test
+      NEXTAUTH_SECRET: ci-secret-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Run property-based tests
+        run: npm test -- --testPathPattern=property-based-api --forceExit
+
+  migration-tests:
+    name: Migration Upgrade Tests (#95)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: stellar_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://user:password@localhost:5432/stellar_test
+      NEXTAUTH_SECRET: ci-secret-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Apply migrations to test DB
+        run: npx node-pg-migrate up --database-url postgresql://user:password@localhost:5432/stellar_test --migrations-dir migrations
+        continue-on-error: true
+      - name: Run migration upgrade tests
+        run: npm test -- --testPathPattern=migration-upgrade --forceExit
+
   contract:
     name: Soroban Contract Build & Test
     runs-on: ubuntu-latest
