@@ -15,8 +15,18 @@ export default defineConfig({
     // Existing functional E2E tests
     {
       name: "chromium",
-      testMatch: /e2e\/(?!visual\/).*\.spec\.ts/,
+      testMatch: /e2e\/(?!visual\/|accessibility\/).*\.spec\.ts/,
       use: { ...devices["Desktop Chrome"] },
+    },
+    // Accessibility tests — issue #91
+    {
+      name: "accessibility",
+      testMatch: /e2e\/accessibility\/.*\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        // Disable animations for deterministic axe results
+        launchOptions: { args: ["--force-prefers-reduced-motion"] },
+      },
     },
     // Visual regression tests — desktop viewport
     {
