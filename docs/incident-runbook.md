@@ -94,6 +94,38 @@ look first. It complements, and does not replace:
   was queued but not delivered, not necessarily that the payout itself
   failed).
 
+### SMS / OTP delivery failing (Termii provider)
+
+- If users report not receiving OTP codes, check the Termii dashboard for
+  API status and quota. The SMS breaker (`smsBreaker` in
+  `src/lib/circuit-breaker.ts`) will open after 5 consecutive failures —
+  `grep "circuit-breaker.*sms.*OPEN" <app-logs>` to confirm.
+- Termii outages are SEV2 (login is blocked but no funds are at risk).
+  OTP delivery failures are logged via `src/lib/sms.ts`; check application
+  logs or Sentry for `TERMII_API_KEY` auth errors or 503 responses.
+- If Termii is confirmed down and the outage is prolonged, consider
+  temporarily calling `smsBreaker.reset()` via the admin endpoint only
+  after the provider recovers.
+
+### Stellar / Horizon connectivity issues
+
+- Payout calls route through `sendUsdcPayment` in `src/lib/stellar.ts`,
+  wrapped by `stellarBreaker`. An open stellar circuit will block all
+  USDC payouts.
+- Check `https://status.stellar.org` for a network-level incident.
+  Testnet and mainnet run independently — confirm the correct network is
+  affected (`STELLAR_NETWORK` env var).
+- To probe manually: `curl https://horizon-testnet.stellar.org/fee_stats`.
+  A non-200 response confirms Horizon is down.
+
+### Paystack gateway issues
+
+- Failed Paystack calls are wrapped by `paystackBreaker`. An open circuit
+  blocks contribution initialisation and payout verifications.
+- Check `https://status.paystack.com`. For NGN contribution failures also
+  check whether the `PAYSTACK_SECRET_KEY` in production is still valid
+  (keys are rotated — see `docs/SECRET_ROTATION.md`).
+
 ### Backup restore drill failed
 
 - Not a live incident, but fix same-day: rerun
