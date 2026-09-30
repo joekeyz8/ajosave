@@ -5,6 +5,9 @@ on:
     - cron: "*/5 * * * *"  # every 5 minutes
   workflow_dispatch:
 
+permissions:  # least-privilege CI tokens (#108)
+  contents: read
+
 jobs:
   ping:
     name: Health Check

@@ -18,6 +18,10 @@ on:
         required: false
         default: ""
 
+permissions:  # least-privilege CI tokens (#108)
+  contents: read
+  deployments: write   # create/update GitHub Deployments for rollback tracking
+
 jobs:
   resolve-target:
     name: Resolve rollback target

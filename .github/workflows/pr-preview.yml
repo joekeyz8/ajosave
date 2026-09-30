@@ -14,6 +14,11 @@ concurrency:
   group: pr-preview-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+permissions:  # least-privilege CI tokens (#108)
+  contents: read
+  pull-requests: write   # post/update preview URL comment
+  deployments: write     # create GitHub Deployment for preview
+
 jobs:
   deploy-preview:
     name: Deploy Preview
