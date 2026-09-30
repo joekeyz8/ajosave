@@ -17,6 +17,10 @@ on:
         required: false
         default: "main"
 
+permissions:  # least-privilege CI tokens (#108)
+  contents: read
+  deployments: write   # create GitHub Deployments
+
 jobs:
   deploy-production:
     name: Deploy Production

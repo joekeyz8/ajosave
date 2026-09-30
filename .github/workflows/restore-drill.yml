@@ -19,6 +19,9 @@ on:
         required: false
         default: ""
 
+permissions:  # least-privilege CI tokens (#108)
+  contents: read
+
 jobs:
   restore-drill:
     name: Restore & Verify

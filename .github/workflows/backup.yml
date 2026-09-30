@@ -5,6 +5,9 @@ on:
     - cron: "0 2 * * *"   # 02:00 UTC daily
   workflow_dispatch:        # allow manual trigger
 
+permissions:  # least-privilege CI tokens (#108)
+  contents: read
+
 jobs:
   backup:
     name: Backup to S3

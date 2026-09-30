@@ -10,6 +10,9 @@ concurrency:
   group: visual-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:  # least-privilege CI tokens (#108)
+  contents: read
+
 jobs:
   visual-regression:
     name: Visual Regression (${{ matrix.viewport }})

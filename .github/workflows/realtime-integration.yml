@@ -10,6 +10,9 @@ concurrency:
   group: realtime-integration-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:  # least-privilege CI tokens (#108)
+  contents: read
+
 jobs:
   realtime-integration:
     name: Realtime Integration Tests

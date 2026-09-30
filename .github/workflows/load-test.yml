@@ -20,8 +20,9 @@ jobs:
   load-test:
     name: k6 Payout Load Test
     runs-on: ubuntu-latest
+    permissions:  # least-privilege CI tokens (#108)
+      contents: read
     steps:
-      - uses: actions/checkout@v4
 
       - name: Install k6
         run: |
