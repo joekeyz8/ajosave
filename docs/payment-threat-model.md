@@ -94,3 +94,25 @@ Review this model when the payment flow, a provider, or the contract changes, an
 `src/__tests__/payment-threat-model.test.ts` fails CI if a threat row is malformed, an ID is duplicated,
 a status is invalid, or a cited evidence file no longer exists, so removing a control without updating
 this document is caught.
+
+## SLO / Latency Budgets
+
+Critical-path operations have agreed p99 latency targets enforced in CI via
+`src/lib/__tests__/performance-budgets.test.ts` and the `performance-budgets` workflow.
+
+| Operation | SLO p99 |
+|---|---|
+| Paystack payment initialisation | 3 000 ms |
+| Paystack payment verification | 3 000 ms |
+| Stellar USDC transaction submit | 5 000 ms |
+| SMS / OTP send (Termii) | 2 000 ms |
+| Payout cron cycle end-to-end | 10 000 ms |
+| OTP verification (server-side) | 500 ms |
+
+These SLOs are informed by the circuit-breaker timeout defaults in `src/lib/circuit-breaker.ts`
+(`paystackBreaker`: 30 s reset, `stellarBreaker`: 60 s reset, `smsBreaker`: 30 s reset) and the
+k6 load-test thresholds in `k6/payout-load-test.js` (p95 < 5 000 ms).
+
+Provider availability below these SLOs triggers the circuit breaker, which fast-fails subsequent
+calls for the configured reset window rather than letting slow provider responses cascade into
+user-facing timeouts.

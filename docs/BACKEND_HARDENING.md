@@ -18,6 +18,21 @@ via `pull`), caps rows (`MAX_EXPORT_ROWS`), neutralises CSV formula injection, a
 source errors or client cancel. `exportResponseHeaders` sets `no-store`, `nosniff` and a sanitised
 attachment filename. Exports are rate limited by the `exports` policy.
 
+## Provider circuit-breakers (#99)
+
+`src/lib/circuit-breaker.ts` wraps every outbound provider call (Stellar/Horizon,
+Paystack, SMS) in a `CircuitBreaker`. Three states: **CLOSED** (normal), **OPEN**
+(provider considered down – calls rejected immediately to prevent cascade), and
+**HALF_OPEN** (one probe allowed after `resetTimeoutMs`). Pre-configured singletons
+(`stellarBreaker`, `paystackBreaker`, `smsBreaker`) are used across the codebase.
+
+Chaos tests covering failure injection, OPEN/HALF_OPEN transitions, concurrent
+fail-fast behaviour, and per-provider boundary cases live in
+`src/lib/__tests__/provider-chaos.test.ts`. The `provider-chaos` CI workflow
+(`.github/workflows/provider-chaos.yml`) enforces ≥ 80% coverage on the
+circuit-breaker module and validates that all provider failure modes are tested
+on every PR.
+
 ## Mutation idempotency (#40)
 `withIdempotency(handler, { required })` accepts `Idempotency-Key` (or legacy `X-Idempotency-Key`)
 on POST/PUT/PATCH/DELETE. The key must be 8-128 chars `[A-Za-z0-9_-:]`. Key reuse with a different body
