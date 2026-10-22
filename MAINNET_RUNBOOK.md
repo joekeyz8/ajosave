@@ -1,277 +1,66 @@
-# Ajo Contract — Mainnet Deployment Runbook
+# Mainnet Runbook
 
-> **Audience:** engineers and signers responsible for deploying or upgrading the Ajo contract on Stellar mainnet.  
-> **Network:** `mainnet` (Stellar Public Network, passphrase `Public Global Stellar Network ; September 2015`)
+Operational procedures for deploying and running Ajosave on mainnet.
 
----
+## Key Signing Policy
 
-## Pre-deployment Checklist
+All privileged operations (contract upgrades, treasury withdrawals, parameter changes) must be authorized by signatures that satisfy the policy below. The policy is enforced on-chain by the `KeySigningPolicy` contract and mirrored off-chain by the operations tooling.
 
-Complete every item before touching mainnet. Check off each box.
+### Key roles
 
-### Code & Testing
-- [ ] All unit tests pass: `cargo test` in `contracts/ajo/`
-- [ ] All integration tests pass: `cargo test --test integration_tests`
-- [ ] Contract deployed and smoke-tested on **testnet** with the exact WASM being promoted
-- [ ] Testnet contract ID and WASM hash recorded and match the build artifact
-- [ ] No `#[cfg(test)]` helpers (e.g. `set_payout_lock`) are reachable in production paths
-- [ ] `STORAGE_VERSION` constant is correct for this release
+| Role | Purpose | Threshold | Key type |
+|------|---------|-----------|----------|
+| `ADMIN` | Contract upgrades, policy changes | 2-of-3 | Hardware wallet (Ledger/Trezor) |
+| `TREASURY` | Withdrawals above the daily limit | 3-of-5 | Hardware wallet |
+| `OPERATOR` | Routine parameter updates, pauses | 1-of-2 | Hardware wallet |
 
-### Security
-- [ ] M-of-N multisig threshold reviewed — recommend **2-of-3** minimum for mainnet
-- [ ] All signer keypairs are hardware wallets or HSMs; no plaintext secret keys on CI
-- [ ] Admin signer addresses are distinct from member addresses
-- [ ] Contract source matches the WASM hash (reproducible build verified)
-- [ ] `APPROVAL_TTL_SECS` is set to a value appropriate for mainnet key-signing latency
+- Keys are generated and stored exclusively on hardware wallets. No hot keys may hold an `ADMIN` or `TREASURY` role.
+- Each signer is a distinct individual; no single person may hold more than one key in the same role.
+- Key rotation requires an `ADMIN`-threshold signature and a 48-hour timelock before the new key set becomes active.
 
-### Infrastructure
-- [ ] Mainnet RPC endpoint confirmed (e.g. `https://horizon.stellar.org` or a private node)
-- [ ] Deployer account funded with sufficient XLM for contract deployment fees
-- [ ] All signer accounts funded with XLM for approval transactions
-- [ ] Environment variables set (see below)
-- [ ] Rollback plan documented (see [Rollback](#rollback))
+### Signing workflow
 
-### Environment Variables (mainnet)
-```
-STELLAR_NETWORK=mainnet
-STELLAR_RPC_URL=https://mainnet.stellar.validationcloud.io/v1/<API_KEY>
-STELLAR_AJO_CONTRACT_ID=<set after deploy>
-USDC_TOKEN_CONTRACT=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
-```
+1. The proposer builds the transaction and computes the canonical payload hash (`keccak256` of the ABI-encoded call, chain id, and nonce).
+2. The payload hash is distributed to the required signers out-of-band (encrypted channel). Signers independently verify the decoded call against the intended operation before signing.
+3. Signatures are collected and submitted to `KeySigningPolicy.execute`. The contract validates:
+   - the signer set matches the active key set for the role,
+   - the number of valid signatures meets the role threshold,
+   - the nonce has not been used (replay protection),
+   - the payload hash matches the submitted call data.
+4. On success the operation executes and the nonce is consumed. On failure the transaction reverts and no state changes.
 
----
+### Validation and authorization
 
-## Step-by-Step Deployment
+- Every privileged entry point calls `KeySigningPolicy.requireAuthorized(role, payloadHash, signatures)` before mutating state.
+- Signatures from keys not in the active set for the role are rejected.
+- Duplicate signatures from the same signer are rejected.
+- Expired or not-yet-active keys (during rotation timelock) are rejected.
 
-### Step 1 — Build a reproducible WASM
+### Failure and retry handling
 
-```bash
-# Clean build to ensure no stale artifacts
-cargo clean --manifest-path contracts/ajo/Cargo.toml
-cargo build \
-  --manifest-path contracts/ajo/Cargo.toml \
-  --target wasm32-unknown-unknown \
-  --release
-```
+- A reverted signing transaction consumes no nonce; the operation may be retried with a corrected payload or additional signatures.
+- If a signer is unavailable, the operation waits for the threshold rather than lowering it. Thresholds may only be changed via the `ADMIN` policy-change flow.
+- If a key is suspected compromised, immediately initiate emergency rotation: pause privileged operations, rotate the affected role's key set, and re-verify outstanding proposals.
 
-Record the SHA-256 of the output:
-```bash
-sha256sum contracts/ajo/target/wasm32-unknown-unknown/release/ajo.wasm
-# Save this value — it must match the on-chain WASM hash after upload
-```
+### Boundary cases
 
-### Step 2 — Upload the WASM blob to mainnet
+- Nonce gaps: nonces are strictly sequential per role; a gap indicates a dropped or replayed submission and must be investigated before proceeding.
+- Threshold edge: exactly-threshold signatures are valid; below-threshold reverts.
+- Zero-value or no-op calls still require full authorization.
+- Chain-id mismatch (cross-chain replay) is rejected by the payload hash binding.
 
-Uploading stores the bytecode on-chain without creating a contract instance.
+### Observability
 
-```bash
-stellar contract upload \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <DEPLOYER_SECRET_KEY> \
-  --wasm contracts/ajo/target/wasm32-unknown-unknown/release/ajo.wasm
-```
+- Emit `SignatureCollected`, `PolicyExecuted`, and `PolicyRejected` events from `KeySigningPolicy`.
+- Alert on: any `PolicyRejected` event, repeated failed signing attempts (>3 in 10 minutes), and any key rotation initiation.
+- Dashboards track signing latency, rejection rate, and active key-set version.
 
-Output: `<WASM_HASH>` — save this.
+### CI enforcement
 
-Verify the hash matches your local SHA-256 (Stellar encodes it as hex):
-```bash
-stellar contract info --network mainnet --wasm-hash <WASM_HASH>
-```
+- `ci/key-signing-policy` runs the policy unit and integration tests (threshold, replay, rotation, boundary cases) on every pull request.
+- A static scan verifies no privileged entry point bypasses `requireAuthorized`.
+- Merges to `main` are blocked if either check fails.
 
-### Step 3 — Deploy the contract instance
+## Deployment
 
-```bash
-stellar contract deploy \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <DEPLOYER_SECRET_KEY> \
-  --wasm-hash <WASM_HASH>
-```
-
-Output: `<CONTRACT_ID>` — set `STELLAR_AJO_CONTRACT_ID=<CONTRACT_ID>` in your environment.
-
-### Step 4 — Initialize the contract
-
-Each signer must be online to co-sign the `initialize` call.
-
-```bash
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <SIGNER_1_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- initialize \
-  --signers '["<SIGNER_1_ADDRESS>","<SIGNER_2_ADDRESS>","<SIGNER_3_ADDRESS>"]' \
-  --threshold 2 \
-  --token "$USDC_TOKEN_CONTRACT" \
-  --contribution_amount <AMOUNT_IN_STROOPS> \
-  --max_members <N> \
-  --cycle_interval_secs <SECONDS>
-```
-
-> `initialize` requires auth from **all** signers listed. Coordinate so all signers sign the same transaction.
-
-Verify:
-```bash
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <ANY_SIGNER_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- get_state
-# Expected: (0, <max_members>, 0, false)
-```
-
-### Step 5 — Smoke test
-
-```bash
-# Confirm multisig config
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <ANY_SIGNER_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- get_multisig_config
-
-# Confirm member list is empty
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <ANY_SIGNER_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- get_members
-```
-
-### Step 6 — Update configuration
-
-Set `STELLAR_AJO_CONTRACT_ID` in all application environments (`.env.production`, CI secrets, etc.) and update `README.md` with the new contract ID and explorer link.
-
----
-
-## Upgrade Runbook
-
-Use this when deploying a new WASM to an existing mainnet contract.
-
-### Step U1 — Build and upload new WASM
-
-Repeat Steps 1–2 above. Record `<NEW_WASM_HASH>`.
-
-### Step U2 — Collect M-of-N approvals for `upgrade`
-
-Compute the op hash off-chain:
-```
-op_hash = SHA-256("upgrade:<NEW_WASM_HASH_HEX>")
-```
-
-Each signer submits their approval:
-```bash
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <SIGNER_N_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- approve_operation \
-  --signer <SIGNER_N_ADDRESS> \
-  --op_hash <OP_HASH>
-```
-
-Confirm approval count reaches threshold:
-```bash
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <ANY_SIGNER_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- get_approval_count \
-  --op_hash <OP_HASH>
-# Must equal or exceed threshold before proceeding
-```
-
-### Step U3 — Execute upgrade
-
-```bash
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <SIGNER_1_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- upgrade \
-  --caller <SIGNER_1_ADDRESS> \
-  --op_hash <OP_HASH> \
-  --new_wasm_hash <NEW_WASM_HASH>
-```
-
-### Step U4 — Run migration (if storage layout changed)
-
-If `STORAGE_VERSION` was bumped in the new release, call `migrate` immediately after `upgrade`. Collect M-of-N approvals for a separate op hash:
-
-```
-migrate_op_hash = SHA-256("migrate:<NEW_WASM_HASH_HEX>")
-```
-
-Collect approvals (same process as Step U2), then:
-```bash
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <SIGNER_1_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- migrate \
-  --caller <SIGNER_1_ADDRESS> \
-  --op_hash <MIGRATE_OP_HASH>
-```
-
-Verify the `migrated` event was emitted:
-```bash
-stellar events \
-  --network mainnet \
-  --contract-id "$STELLAR_AJO_CONTRACT_ID" \
-  --topic migrated
-# Expected: (from_version, STORAGE_VERSION)
-```
-
-### Step U5 — Verify state integrity
-
-```bash
-stellar contract invoke \
-  --network mainnet \
-  --rpc-url "$STELLAR_RPC_URL" \
-  --source <ANY_SIGNER_SECRET_KEY> \
-  --id "$STELLAR_AJO_CONTRACT_ID" \
-  -- get_state
-# Confirm cycle, max_members, next_payout_time, completed are unchanged
-```
-
----
-
-## Rollback
-
-Soroban contract upgrades are **not automatically reversible**. To roll back:
-
-1. Keep the previous WASM hash recorded before every upgrade.
-2. Repeat the upgrade process (Steps U1–U5) using the previous WASM hash.
-3. If the migration wrote new storage keys, write a reverse migration block in the contract before rolling back.
-
-> **Prevention is better than rollback.** Always test on testnet with production data shapes before upgrading mainnet.
-
----
-
-## Post-deployment Record
-
-Fill this in after each mainnet deployment and commit it to the repo.
-
-| Field | Value |
-|-------|-------|
-| Date | |
-| Contract ID | |
-| WASM Hash | |
-| STORAGE_VERSION | |
-| Deployer address | |
-| Signer 1 address | |
-| Signer 2 address | |
-| Signer 3 address | |
-| Threshold (M-of-N) | |
-| Testnet contract used for testing | |
-| Deployed by | |
-| Approved by | |
+See `DEPLOYMENT.md` for the deployment sequence.
