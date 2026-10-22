@@ -58,3 +58,32 @@
   margin: 0 0 1.25rem;
   line-height: 1.4;
 }
+/* Exchange rate inline display */
+.rateDisplay {
+  font-size: 0.8rem;
+  margin-bottom: 0.5rem;
+  min-height: 1.2em;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.rateValue {
+  color: var(--color-text-secondary, #94a3b8);
+}
+
+.rateLoading {
+  color: var(--color-text-secondary, #94a3b8);
+  font-style: italic;
+}
+
+.rateError {
+  color: var(--color-error, #f87171);
+}
+
+.rateStale {
+  color: var(--color-warning, #fb923c);
+  font-size: 0.75rem;
+}
+
