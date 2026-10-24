@@ -4,6 +4,7 @@ import { SessionProvider } from "next-auth/react";
 import { Analytics } from "@vercel/analytics/react";
 import { SentryUserContext } from "@/components/SentryUserContext";
 import { PWAProvider } from "@/components/PWAProvider";
+import { PWAInstallBanner } from "@/components/PWAInstallBanner";
 import { IntlProvider } from "@/components/IntlProvider";
 import { QueryInvalidationProvider } from "@/lib/queryInvalidation";
 
@@ -21,6 +22,7 @@ export function Providers({ children, locale, messages }: ProvidersProps) {
           <SentryUserContext />
           {children}
           <PWAProvider />
+          <PWAInstallBanner />
           <Analytics />
         </QueryInvalidationProvider>
       </IntlProvider>
