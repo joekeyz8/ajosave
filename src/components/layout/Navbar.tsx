@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useState, useEffect, useRef } from "react";
+import { GlobalSearch } from "./GlobalSearch";
 import styles from "./Navbar.module.css";
 
 export function Navbar() {
@@ -55,6 +56,9 @@ export function Navbar() {
           <span className={styles.logoMark} aria-hidden="true">S</span>
           <span className={styles.logoText}>STELLAR</span>
         </Link>
+
+        {/* Global search — authenticated pages */}
+        <GlobalSearch />
 
         {/* Desktop links */}
         <ul className={styles.links} role="list" aria-label="Desktop navigation links">
