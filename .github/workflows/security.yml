@@ -144,3 +144,142 @@ jobs:
               issue_number: context.issue.number,
               body,
             });
+
+  key-signing-policy:
+    name: Key Signing Policy (commit & tag signatures)
+    runs-on: ubuntu-latest
+    # Enforce on PRs and pushes; scheduled runs are advisory only.
+    continue-on-error: ${{ github.event_name == 'schedule' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate signing policy configuration
+        id: policy
+        env:
+          # Optional allowlist of trusted signing key fingerprints (comma-separated).
+          TRUSTED_SIGNING_KEYS: ${{ vars.TRUSTED_SIGNING_KEYS }}
+          # Require signatures on all commits (true) or only on merge/tag commits (false).
+          REQUIRE_ALL_COMMITS: ${{ vars.REQUIRE_ALL_COMMITS || 'false' }}
+        run: |
+          set -euo pipefail
+
+          # Boundary: empty allowlist means we cannot verify signer identity.
+          if [ -z "${TRUSTED_SIGNING_KEYS:-}" ]; then
+            echo "::warning::TRUSTED_SIGNING_KEYS is not configured; signer identity cannot be verified."
+            echo "enforce=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Normalize allowlist into a lookup file (uppercase, trimmed).
+          echo "${TRUSTED_SIGNING_KEYS}" | tr ',' '\n' | tr -d ' ' | tr '[:lower:]' '[:upper:]' | sed '/^$/d' > trusted-keys.txt
+          if [ ! -s trusted-keys.txt ]; then
+            echo "::error::TRUSTED_SIGNING_KEYS is set but contains no valid fingerprints."
+            exit 1
+          fi
+
+          echo "enforce=true" >> "$GITHUB_OUTPUT"
+          echo "require_all=${REQUIRE_ALL_COMMITS}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify commit signatures
+        if: steps.policy.outputs.enforce == 'true'
+        env:
+          REQUIRE_ALL_COMMITS: ${{ steps.policy.outputs.require_all }}
+        run: |
+          set -euo pipefail
+
+          # Determine the commit range to verify.
+          if [ "${{ github.event_name }}" = 'pull_request' ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+            RANGE="${BASE}..${HEAD}"
+          elif [ "${{ github.event_name }}" = 'push' ] && [ "${{ github.event.before }}" != '0000000000000000000000000000000000000000' ]; then
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          else
+            # Scheduled / first push: verify the latest commit only.
+            RANGE="-1 HEAD"
+          fi
+
+          echo "Verifying commit range: ${RANGE}"
+
+          # Collect commits in range (handle single-commit fallback).
+          if [ "${RANGE}" = "-1 HEAD" ]; then
+            COMMITS=$(git rev-list -1 HEAD)
+          else
+            COMMITS=$(git rev-list "${RANGE}")
+          fi
+
+          if [ -z "${COMMITS}" ]; then
+            echo "No commits to verify in range."
+            exit 0
+          fi
+
+          FAILED=0
+          for sha in ${COMMITS}; do
+            # Skip merge commits unless all commits are required.
+            PARENTS=$(git rev-list --parents -n 1 "${sha}" | wc -w)
+            if [ "${PARENTS}" -gt 2 ] && [ "${REQUIRE_ALL_COMMITS}" != 'true' ]; then
+              echo "::notice::Skipping merge commit ${sha} (REQUIRE_ALL_COMMITS=false)."
+              continue
+            fi
+
+            # Retry signature verification to tolerate transient gpg/network issues.
+            VERIFIED=0
+            for attempt in 1 2 3; do
+              if git verify-commit "${sha}" >/dev/null 2>&1; then
+                VERIFIED=1
+                break
+              fi
+              echo "::warning::Signature verification attempt ${attempt} failed for ${sha}; retrying..."
+              sleep $((attempt * 2))
+            done
+
+            if [ "${VERIFIED}" -ne 1 ]; then
+              echo "::error::Commit ${sha} is not signed or signature is invalid."
+              FAILED=1
+              continue
+            fi
+
+            # Authorization: verify signer fingerprint is in the trusted allowlist.
+            FPR=$(git log -1 --format='%GK' "${sha}" | tr '[:lower:]' '[:upper:]')
+            if [ -z "${FPR}" ] || ! grep -qx "${FPR}" trusted-keys.txt; then
+              echo "::error::Commit ${sha} signed by untrusted key '${FPR:-unknown}'."
+              FAILED=1
+              continue
+            fi
+
+            echo "✅ Commit ${sha} signed by trusted key ${FPR}."
+          done
+
+          if [ "${FAILED}" -ne 0 ]; then
+            echo "::error::Key signing policy violated. See runbook: docs/security/key-signing-policy.md"
+            exit 1
+          fi
+
+          echo "✅ Key signing policy satisfied."
+
+      - name: Verify tag signatures
+        if: steps.policy.outputs.enforce == 'true' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          if ! git verify-tag "${TAG}" >/dev/null 2>&1; then
+            echo "::error::Tag ${TAG} is not signed or signature is invalid."
+            exit 1
+          fi
+          FPR=$(git tag -v "${TAG}" 2>&1 | grep -oE '[A-F0-9]{40}' | head -n1 || true)
+          if [ -z "${FPR}" ] || ! grep -qx "${FPR}" trusted-keys.txt; then
+            echo "::error::Tag ${TAG} signed by untrusted key '${FPR:-unknown}'."
+            exit 1
+          fi
+          echo "✅ Tag ${TAG} signed by trusted key ${FPR}."
+
+      - name: Upload signing policy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: key-signing-policy-report
+          path: trusted-keys.txt
+          if-no-files-found: ignore
+          retention-days: 30

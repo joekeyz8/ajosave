@@ -97,6 +97,28 @@ jobs:
       - name: Run migration upgrade tests
         run: npm test -- --testPathPattern=migration-upgrade --forceExit
 
+  key-signing-policy:
+    name: Key Signing Policy (#111)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci
+      - name: Run key signing policy tests
+        run: npm test -- --testPathPattern=key-signing-policy --forceExit
+      - name: Scan for hardcoded signing secrets
+        run: |
+          # Fail if a private/secret key literal is committed outside test fixtures.
+          if grep -rInE '(S[A-Z2-7]{55}|-----BEGIN (EC |RSA )?PRIVATE KEY-----)' \
+              --include='*.ts' --include='*.tsx' --include='*.js' --include='*.jsx' \
+              --exclude-dir=node_modules --exclude-dir=.next --exclude-dir=__tests__ \
+              --exclude='*.test.ts' --exclude='*.spec.ts' . ; then
+            echo "ERROR: Potential hardcoded signing key detected."
+            exit 1
+          fi
+          echo "No hardcoded signing keys detected."
+
   contract:
     name: Soroban Contract Build & Test
     runs-on: ubuntu-latest
