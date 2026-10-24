@@ -36,9 +36,11 @@ export interface Member {
   id: string;
   circleId: string;
   userId: string;
+  displayName?: string;
   position: number; // payout order (1 = first to receive)
   status: MemberStatus;
   hasReceivedPayout: boolean;
+  contributionStreak?: number; // consecutive on-time contribution cycles
   joinedAt: Date;
 }
 
