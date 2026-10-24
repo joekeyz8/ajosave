@@ -1,0 +1,184 @@
+/* ─── Wizard Shell ──────────────────────────────────────────────────────── */
+.wizard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  width: 100%;
+  max-width: 520px;
+}
+
+.title {
+  font-size: var(--text-2xl);
+  font-weight: var(--font-bold);
+  color: var(--color-text-primary);
+  margin-bottom: var(--space-1);
+}
+
+.subtitle {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ─── Step Progress Indicator ───────────────────────────────────────────── */
+.stepper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  counter-reset: step;
+}
+
+.stepItem {
+  display: flex;
+  align-items: center;
+  flex: 1;
+}
+
+.stepItem:last-child {
+  flex: 0 0 auto;
+}
+
+.stepCircle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border);
+  background: var(--color-bg);
+  font-size: var(--text-xs);
+  font-weight: var(--font-bold);
+  color: var(--color-text-muted);
+  transition: background var(--transition-fast), border-color var(--transition-fast),
+    color var(--transition-fast);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.stepLabel {
+  font-size: var(--text-xs);
+  font-weight: var(--font-medium);
+  color: var(--color-text-muted);
+  margin-top: var(--space-1);
+  white-space: nowrap;
+  transition: color var(--transition-fast);
+}
+
+.stepMeta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+
+.stepConnector {
+  flex: 1;
+  height: 2px;
+  background: var(--color-border);
+  margin: 0 var(--space-1);
+  position: relative;
+  top: -10px; /* align with circle center */
+  transition: background var(--transition-fast);
+}
+
+/* Active step */
+.stepItem.active .stepCircle {
+  background: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+  color: #fff;
+}
+
+.stepItem.active .stepLabel {
+  color: var(--color-brand-primary);
+  font-weight: var(--font-semibold);
+}
+
+/* Completed step */
+.stepItem.done .stepCircle {
+  background: var(--color-brand-primary);
+  border-color: var(--color-brand-primary);
+  color: #fff;
+}
+
+.stepItem.done .stepLabel {
+  color: var(--color-text-secondary);
+}
+
+.stepItem.done .stepConnector {
+  background: var(--color-brand-primary);
+}
+
+/* ─── Step Content Panel ───────────────────────────────────────────────── */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.panelTitle {
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-primary);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+/* ─── Navigation Buttons ────────────────────────────────────────────────── */
+.nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+}
+
+/* ─── Review Step ───────────────────────────────────────────────────────── */
+.reviewList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  background: var(--color-bg-elevated);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+}
+
+.reviewRow {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.reviewLabel {
+  color: var(--color-text-muted);
+  font-weight: var(--font-medium);
+}
+
+.reviewValue {
+  color: var(--color-text-primary);
+  font-weight: var(--font-semibold);
+  text-align: right;
+}
+
+/* ─── Error Message ─────────────────────────────────────────────────────── */
+.error {
+  font-size: var(--text-sm);
+  color: var(--color-error);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+/* ─── Mobile (375 px) ────────────────────────────────────────────────────── */
+@media (max-width: 400px) {
+  .stepLabel {
+    display: none;
+  }
+
+  .nav {
+    flex-direction: column-reverse;
+    align-items: stretch;
+  }
+}
