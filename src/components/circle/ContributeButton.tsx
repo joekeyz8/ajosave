@@ -47,7 +47,14 @@ export function ContributeButton({
   const [feeError, setFeeError] = useState<string | null>(null);
 
   const { toast } = useToast();
-  const { rate, loading: rateLoading } = useExchangeRate("NGN");
+  const { rate, fetchedAt, loading: rateLoading, error: rateError } = useExchangeRate("NGN");
+
+  // Determine if the fetched rate is stale (older than 5 minutes)
+  const isRateStale = (() => {
+    if (!fetchedAt) return false;
+    const ageMs = Date.now() - new Date(fetchedAt).getTime();
+    return ageMs > 5 * 60 * 1000; // 5 min
+  })();
 
   // Guard against setting state on an unmounted component
   const mountedRef = useRef(true);
@@ -219,6 +226,32 @@ export function ContributeButton({
 
   return (
     <>
+      {/* Inline exchange rate display shown before the modal */}
+      <div
+        className={styles.rateDisplay}
+        aria-live="polite"
+        aria-atomic="true"
+      >
+        {rateLoading ? (
+          <span className={styles.rateLoading}>Loading exchange rate…</span>
+        ) : rateError ? (
+          <span className={styles.rateError} role="alert">
+            ⚠ Exchange rate unavailable
+          </span>
+        ) : rate && usdcEquivalent ? (
+          <>
+            <span className={styles.rateValue}>
+              ≈ {usdcEquivalent} USDC
+            </span>
+            {isRateStale && (
+              <span className={styles.rateStale} role="alert" title={`Rate last fetched at ${fetchedAt}`}>
+                ⚠ Rate may be outdated
+              </span>
+            )}
+          </>
+        ) : null}
+      </div>
+
       {/* Trigger button — disabled while any async action is in-flight */}
       <Button
         variant="accent"
@@ -258,11 +291,26 @@ export function ContributeButton({
               <div className={styles.row}>
                 <dt>≈ USDC</dt>
                 <dd>
-                  {rateLoading
-                    ? "Loading…"
-                    : usdcEquivalent
-                    ? `${usdcEquivalent} USDC`
-                    : "—"}
+                  {rateLoading ? (
+                    "Loading…"
+                  ) : rateError ? (
+                    <span className={styles.rateError}>Rate unavailable</span>
+                  ) : usdcEquivalent ? (
+                    <>
+                      {usdcEquivalent} USDC
+                      {isRateStale && (
+                        <span
+                          className={styles.rateStale}
+                          role="alert"
+                          title={`Rate last fetched at ${fetchedAt}`}
+                        >
+                          {" "}⚠ Stale
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    "—"
+                  )}
                 </dd>
               </div>
               <div className={styles.row}>
@@ -300,6 +348,7 @@ export function ContributeButton({
 
             <p className={styles.disclaimer}>
               ⚠ Exchange rate is indicative and refreshes every 60 seconds.
+              Rates older than 5 minutes are flagged as stale.
               Final USDC amount may vary slightly at settlement.
             </p>
 
