@@ -84,6 +84,14 @@ export function CreateCircleWizard() {
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
       clearPersistedForm();
+      // Store the circle name so the detail page can fire the success toast
+      // immediately on mount (sessionStorage survives client-side navigation).
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.setItem(
+          "circle_created_toast",
+          JSON.stringify({ name: data.name })
+        );
+      }
       router.push(`/circles/${json.data.id}`);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Something went wrong");

@@ -22,6 +22,7 @@ import { CircleCompletionScreen } from "@/components/circle/CircleCompletionScre
 import { ContributeButton } from "@/components/circle/ContributeButton";
 import { DisputeForm } from "@/components/circle/DisputeForm";
 import { EarlyExitButton } from "@/components/circle/EarlyExitButton";
+import { CircleCreatedToast } from "@/components/circle/CircleCreatedToast";
 import styles from "./page.module.css";
 
 interface Props {
@@ -99,6 +100,9 @@ export default async function CircleDetailPage({ params }: Props) {
   return (
     <div className={styles.page}>
       <div className="container">
+        {/* Fire success toast when arriving from CreateCircleWizard (#393) */}
+        <CircleCreatedToast />
+
         <div className={styles.header}>
           <div>
             <h1 className={styles.title}>{circle.name}</h1>
