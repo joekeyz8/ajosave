@@ -44,6 +44,29 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # High-availability Redis (opt-in): docker compose --profile ha up
+  # Then set REDIS_SENTINEL_URL=redis+sentinel://redis-sentinel:26379/mymaster
+  redis-replica:
+    image: redis:7-alpine
+    profiles: [ha]
+    command: redis-server --replicaof redis 6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis-sentinel:
+    image: redis:7-alpine
+    profiles: [ha]
+    command: >
+      sh -c 'printf "port 26379\nsentinel resolve-hostnames yes\nsentinel monitor mymaster redis 6379 1\nsentinel down-after-milliseconds mymaster 5000\nsentinel failover-timeout mymaster 20000\n" > /tmp/sentinel.conf && redis-sentinel /tmp/sentinel.conf'
+    ports:
+      - "26379:26379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   postgres_data:
   redis_data:

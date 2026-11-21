@@ -98,6 +98,7 @@ start / the feature will not work. **Optional** = has a safe default.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `REDIS_URL` | Optional | `redis://localhost:6379` | Redis connection string, used for rate limiting/locking/queues. |
+| `REDIS_SENTINEL_URL` | Optional | — | Redis Sentinel connection for high availability, format `redis+sentinel://host1:26379,host2:26379/<master-name>`. When set, takes precedence over `REDIS_URL`; the client follows the master across failovers and reconnects automatically. |
 | `OUTBOX_BATCH_LIMIT` | Optional | `50` | Rows processed per transactional-outbox dispatch batch (see `docs/transactional-outbox.md`). |
 | `OUTBOX_MAX_ATTEMPTS` | Optional | `5` | Max delivery attempts before an outbox row is marked dead. |
 | `WORKER_SHUTDOWN_TIMEOUT_MS` | Optional | `10000` | Grace period for background workers to finish in-flight work on shutdown. |
