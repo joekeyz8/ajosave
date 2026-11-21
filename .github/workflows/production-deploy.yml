@@ -63,6 +63,39 @@ jobs:
           SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
+      - name: Upload source maps to Sentry
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+        run: |
+          if [ -z "$SENTRY_AUTH_TOKEN" ]; then echo "::warning::SENTRY_AUTH_TOKEN not set; skipping upload"; exit 0; fi
+          npx --yes @sentry/cli@2 sourcemaps inject .next
+          npx --yes @sentry/cli@2 sourcemaps upload --release "$GITHUB_SHA" .next
+      - name: Remove source maps from public bundle
+        run: find .next -name '*.map' -type f -delete
+      - name: Deploy green (preview, no traffic)
+        id: vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: "--prebuilt"
+
+      - name: Validate green deployment
+        env:
+          GREEN_URL: ${{ steps.vercel.outputs.preview-url }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 10); do
+            if curl -fsS --max-time 15 "$GREEN_URL/api/health" > /dev/null; then
+              echo "Green deployment healthy: $GREEN_URL"; exit 0
+            fi
+            echo "Health check attempt $i failed; retrying in 10s"; sleep 10
+          done
+          echo "::error::Green deployment failed health checks; traffic not shifted"; exit 1
+
       - name: Run database migrations
         id: migrations
         run: |
@@ -88,14 +121,13 @@ jobs:
               title: "🚨 Production database migration failed",
               body: `A database migration failed in \`${context.workflow}\` (run ${context.runId}).\n\nThe production deployment was aborted before traffic was shifted.\n\nRun logs: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
-      - name: Deploy to Vercel (Production)
-        id: vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          vercel-args: "--prebuilt --prod"
+      - name: Shift traffic to green (promote)
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          GREEN_URL: ${{ steps.vercel.outputs.preview-url }}
+        run: npx --yes vercel@39 promote "$GREEN_URL" --yes --token "$VERCEL_TOKEN"
 
       - name: Resolve deployed SHA
         id: resolved

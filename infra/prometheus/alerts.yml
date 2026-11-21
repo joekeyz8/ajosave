@@ -1,0 +1,23 @@
+# Prometheus alerting rules for Ajosave (issue #471).
+groups:
+  - name: ajosave-api
+    rules:
+      - alert: HighP99Latency
+        expr: |
+          histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 2
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "API p99 latency above 2s"
+          description: "p99 latency is {{ $value | humanizeDuration }} over the last 5 minutes."
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(http_requests_total[5m])), 1e-9) > 0.01
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: "API 5xx error rate above 1%"
+          description: "Error rate is {{ $value | humanizePercentage }} over the last 5 minutes."

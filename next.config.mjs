@@ -27,6 +27,10 @@ const nextConfig = {
   // production container: Next traces only the packages the server code
   // imports, instead of shipping the whole `node_modules`.
   output: "standalone",
+  // Generate browser source maps so CI can upload them to Sentry; the
+  // workflow deletes every *.map file after upload so they are never
+  // served publicly (issue #470).
+  productionBrowserSourceMaps: true,
   serverExternalPackages: ["@stellar/stellar-sdk"],
   async headers() {
     return [

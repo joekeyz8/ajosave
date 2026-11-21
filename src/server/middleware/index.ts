@@ -10,6 +10,7 @@ import logger from "@/lib/logger";
 import { runWithCorrelationId } from "@/lib/correlation";
 import { sanitizeBody } from "@/lib/sanitize";
 import { isAppError, internalError } from "@/lib/errors";
+import { observeHttpRequest, normalizeRoute } from "@/lib/metrics";
 import { withAuthorization } from "./authorization";
 
 export { withAuthorization, resolveUser } from "./authorization";
@@ -42,6 +43,12 @@ export function withErrorHandler(handler: Handler): Handler {
       const reqLogger = logger.child({ correlationId });
       try {
         const response = await handler(req, ctx);
+        observeHttpRequest(
+          req.method,
+          normalizeRoute(pathname),
+          response.status,
+          Date.now() - start
+        );
         reqLogger.info({
           method: req.method,
           path: pathname,
@@ -70,6 +77,8 @@ export function withErrorHandler(handler: Handler): Handler {
           durationMs,
           err,
         });
+
+        observeHttpRequest(req.method, normalizeRoute(pathname), appErr.statusCode, durationMs);
 
         const body: ApiError & { details?: unknown } = appErr.toJSON();
         const res = NextResponse.json<ApiError>(body, { status: appErr.statusCode });
