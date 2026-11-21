@@ -14,6 +14,8 @@ jobs:
     name: Deploy Staging
     runs-on: ubuntu-latest
     environment: staging
+    outputs:
+      deployment_url: ${{ steps.vercel.outputs.deployment_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -132,22 +134,67 @@ jobs:
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: mergedPR.number,
-                  body: `## 🚀 Staging Deployment
-                  
-| Environment | URL |
-|-------------|-----|
-| Staging | ${process.env.STAGING_URL || 'https://staging.ajosave.app'} |
-
-✅ Staging has been deployed with testnet contract settings.
-`
+                  body: [
+                    '## 🚀 Staging Deployment',
+                    '',
+                    '| Environment | URL |',
+                    '|-------------|-----|',
+                    `| Staging | ${process.env.STAGING_URL || 'https://staging.ajosave.app'} |`,
+                    '',
+                    '✅ Staging has been deployed with testnet contract settings.',
+                  ].join('\n')
                 });
               }
             }
 
+  load-test-staging:
+    name: k6 Performance Gate (Staging)
+    runs-on: ubuntu-latest
+    needs: [deploy-staging]
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - uses: grafana/setup-k6-action@v1
+      - name: Run k6 load test (50 VUs, p95 < 500 ms, errors < 0.1 %)
+        env:
+          BASE_URL: ${{ needs.deploy-staging.outputs.deployment_url || vars.STAGING_URL }}
+          CRON_SECRET: ${{ secrets.STAGING_CRON_SECRET }}
+          CIRCLE_ID: ${{ vars.STAGING_LOAD_TEST_CIRCLE_ID }}
+        run: |
+          mkdir -p k6-results
+          # k6 exits non-zero (99) when a threshold is breached, failing this job
+          # and blocking the dependent deploy job below.
+          k6 run k6/payout-load-test.js
+      - name: Update k6/BENCHMARKS.md with run baseline
+        if: always()
+        run: |
+          [ -f k6-results/summary.json ] || exit 0
+          node -e "
+            const fs = require('fs');
+            const m = JSON.parse(fs.readFileSync('k6-results/summary.json', 'utf8')).metrics || {};
+            const p95 = m.http_req_duration?.values?.['p(95)'];
+            const err = m.payout_error_rate?.values?.rate;
+            const row = '| ' + [new Date().toISOString(), process.env.GITHUB_SHA.slice(0, 7),
+              p95 !== undefined ? p95.toFixed(2) : 'N/A',
+              err !== undefined ? (err * 100).toFixed(3) : 'N/A',
+              m.http_reqs?.values?.count ?? 'N/A'].join(' | ') + ' |\n';
+            fs.appendFileSync('k6/BENCHMARKS.md', row);
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, '### k6 staging run\n| Date | Commit | p95 (ms) | Error rate (%) | Requests |\n|---|---|---|---|---|\n' + row);
+          "
+      - name: Upload k6 results and updated benchmarks
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-staging-results
+          path: |
+            k6-results/
+            k6/BENCHMARKS.md
+          retention-days: 90
+
   deploy-contract-testnet:
     name: Deploy Contract to Testnet
     runs-on: ubuntu-latest
-    needs: [deploy-staging]
+    needs: [deploy-staging, load-test-staging]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4

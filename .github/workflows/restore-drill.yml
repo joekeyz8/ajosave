@@ -27,6 +27,10 @@ jobs:
     name: Restore & Verify
     runs-on: ubuntu-latest
     environment: production   # uses same secrets as the backup job
+    timeout-minutes: 45
+    env:
+      PAGERDUTY_ROUTING_KEY: ${{ secrets.PAGERDUTY_ROUTING_KEY }}
+      ONCALL_EMAIL: ${{ secrets.ONCALL_EMAIL }}
 
     services:
       postgres:
@@ -81,6 +85,10 @@ jobs:
           fi
 
       # ── Download and restore into the ephemeral DB ────────────────────────────
+      - name: Start RTO timer
+        id: rto_start
+        run: echo "start=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Download backup from S3
         env:
           S3_BACKUP_BUCKET: ${{ secrets.S3_BACKUP_BUCKET }}
@@ -94,10 +102,11 @@ jobs:
           PGPASSWORD: drillpassword
         run: |
           echo "Restoring backup to ephemeral PostgreSQL instance…"
+          set -o pipefail
           gunzip -c /tmp/drill_backup.sql.gz | psql \
             -h localhost -p 5432 \
             -U drilluser -d drilldb \
-            --no-password \
+            --no-password -v ON_ERROR_STOP=1 \
             2>&1 | tail -20
 
       # ── Sanity-check the restored data ────────────────────────────────────────
@@ -136,7 +145,28 @@ jobs:
           echo "  users: $USER_COUNT rows"
           echo "  circles: $CIRCLE_COUNT rows"
 
-          # 4. Write a summary for the job
+          # 4. Schema integrity: key columns must exist
+          for COL in users.id circles.id members.circle_id contributions.circle_id payouts.circle_id; do
+            T=${COL%%.*}; C=${COL#*.}
+            HAS=$(psql -h localhost -p 5432 -U drilluser -d drilldb --no-password -At \
+              -c "SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='${T}' AND column_name='${C}'")
+            if [ "$HAS" -ne 1 ]; then
+              echo "::error::Schema integrity check failed: column ${COL} missing"
+              exit 1
+            fi
+          done
+          echo "  ✓ Schema integrity verified"
+
+          # 5. Row counts for every essential table (users/circles must be non-empty)
+          for TABLE in members contributions payouts; do
+            echo "  $TABLE: $(psql -h localhost -p 5432 -U drilluser -d drilldb --no-password -At -c "SELECT count(*) FROM ${TABLE}") rows"
+          done
+          if [ "$USER_COUNT" -lt 1 ] || [ "$CIRCLE_COUNT" -lt 1 ]; then
+            echo "::error::Restored users/circles tables are empty — restore validation failed"
+            exit 1
+          fi
+
+          # 6. Write a summary for the job
           {
             echo "table_count=$TABLES"
             echo "user_count=$USER_COUNT"
@@ -144,6 +174,17 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           echo "All sanity checks passed ✓"
+
+      - name: Check RTO (< 30 minutes)
+        id: rto
+        run: |
+          ELAPSED=$(( $(date +%s) - ${{ steps.rto_start.outputs.start }} ))
+          echo "seconds=$ELAPSED" >> "$GITHUB_OUTPUT"
+          echo "Restoration time: ${ELAPSED}s"
+          if [ "$ELAPSED" -ge 1800 ]; then
+            echo "::error::Restoration took ${ELAPSED}s — exceeds 30 minute RTO target"
+            exit 1
+          fi
 
       # ── Reporting ─────────────────────────────────────────────────────────────
       - name: Write job summary
@@ -157,6 +198,7 @@ jobs:
           echo "| Tables restored | ${{ steps.verify.outputs.table_count }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Users | ${{ steps.verify.outputs.user_count }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Circles | ${{ steps.verify.outputs.circle_count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Restoration time (RTO < 1800s) | ${{ steps.rto.outputs.seconds }}s |" >> $GITHUB_STEP_SUMMARY
           echo "| Result | ${{ job.status == 'success' && '✅ PASSED' || '❌ FAILED' }} |" >> $GITHUB_STEP_SUMMARY
 
       - name: Notify on failure
@@ -168,6 +210,35 @@ jobs:
             -d "{
               \"text\": \":red_circle: *Ajosave backup restore drill FAILED*\nBackup key: \`${{ steps.resolve_key.outputs.s3_key }}\`\n<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Run>\"
             }"
+
+      - name: Page on-call via PagerDuty
+        if: failure() && env.PAGERDUTY_ROUTING_KEY != ''
+        run: |
+          curl -s -X POST https://events.pagerduty.com/v2/enqueue \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"routing_key\": \"${PAGERDUTY_ROUTING_KEY}\",
+              \"event_action\": \"trigger\",
+              \"payload\": {
+                \"summary\": \"Ajosave backup restore drill FAILED\",
+                \"source\": \"github-actions/restore-drill\",
+                \"severity\": \"critical\",
+                \"custom_details\": {\"run\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}
+              }
+            }"
+
+      - name: Email on-call engineer
+        if: failure() && env.ONCALL_EMAIL != ''
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: 465
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "[Ajosave] Backup restore drill FAILED"
+          to: ${{ secrets.ONCALL_EMAIL }}
+          from: Ajosave CI <${{ secrets.SMTP_USERNAME }}>
+          body: "The weekly backup restore drill failed. Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Cleanup
         if: always()

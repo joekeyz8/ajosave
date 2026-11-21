@@ -87,6 +87,16 @@ aws s3api put-bucket-lifecycle-configuration \
   }'
 ```
 
+## Automated Restore Verification
+
+`.github/workflows/restore-drill.yml` runs weekly (Sunday 03:00 UTC) and:
+
+- restores the latest S3 backup into a throwaway PostgreSQL service container;
+- validates schema integrity (essential tables and key columns) and row counts;
+- measures restoration time and fails if it exceeds the **30 minute RTO**;
+- on failure, alerts on-call via PagerDuty (`PAGERDUTY_ROUTING_KEY`), email
+  (`ONCALL_EMAIL`, `SMTP_SERVER`, `SMTP_USERNAME`, `SMTP_PASSWORD`) and Slack.
+
 ## Monitoring
 
 The GitHub Actions workflow (`backup.yml`) runs daily and marks the job as failed if the backup does not complete. Configure GitHub notifications or a status check integration to alert on failure.

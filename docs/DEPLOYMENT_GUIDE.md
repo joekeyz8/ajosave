@@ -106,6 +106,23 @@ pool.query('SELECT NOW()', (err, res) => {
 
 ---
 
+## Container Health Check
+
+The `Dockerfile` defines a `HEALTHCHECK` that calls `GET /api/health` every
+30 s with a 10 s timeout (20 s start period). The container is marked
+`unhealthy` after 3 consecutive failures, so orchestrators (Docker Compose,
+ECS, Kubernetes) know when the app is ready to serve traffic.
+
+`docker-compose.yml` mirrors the same check on the `app` service, so any
+service declaring `depends_on: { app: { condition: service_healthy } }` waits
+until the app is healthy. The app itself waits for healthy `postgres` and
+`redis` before starting.
+
+```bash
+docker compose up -d
+docker inspect --format '{{.State.Health.Status}}' $(docker compose ps -q app)
+```
+
 ## Step 3: Deploy Code Changes
 
 ### Pull Latest Code

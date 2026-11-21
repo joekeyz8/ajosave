@@ -22,4 +22,9 @@ COPY --from=builder --chown=node:node /runtime ./
 USER node
 
 EXPOSE 3000
+
+# Probe /api/health every 30s (10s timeout); unhealthy after 3 consecutive failures
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD wget -q -O /dev/null http://127.0.0.1:3000/api/health || exit 1
+
 CMD ["node", "server.js"]
