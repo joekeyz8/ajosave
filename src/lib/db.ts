@@ -20,6 +20,7 @@
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 import { recordQuery } from "./query-metrics";
 import { serverConfig } from "@/server/config";
+import { withSpan, redactSql } from "./tracing";
 
 const _DB_POOL_SIZE = parseInt(process.env.DB_POOL_SIZE ?? "10", 10);
 const _DB_CONNECTION_TIMEOUT_MS = parseInt(process.env.DB_CONNECTION_TIMEOUT_MS ?? "5000", 10);
@@ -76,6 +77,10 @@ function getPool(): Pool {
  * Call during server shutdown.
  */
 export async function closePool(): Promise<void> {
+  if (replicaPool) {
+    await replicaPool.end().catch((err) => console.error("[db] Error closing replica pool:", err));
+    replicaPool = null;
+  }
   if (pool) {
     console.log("[db] Closing connection pool...");
     try {
@@ -119,7 +124,11 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
     try {
       const started = Date.now();
       try {
-        const result = await getPool().query<T>(text, params);
+        const result = await withSpan(
+          "db.query",
+          { "db.system": "postgresql", "db.statement": redactSql(text) },
+          () => getPool().query<T>(text, params)
+        );
         recordQuery(text, Date.now() - started);
         return result;
       } catch (e) {
@@ -161,5 +170,85 @@ export async function transaction<T>(
     throw err;
   } finally {
     client.release();
+  }
+}
+
+// ── Read replicas (#478) ────────────────────────────────────────────────────
+// DATABASE_REPLICA_URL points at the read replica nearest to the deployment
+// region (e.g. eu-west-1 for EU/UK traffic). Writes always use the primary.
+const REPLICA_MAX_LAG_S = parseFloat(process.env.DB_REPLICA_MAX_LAG_S ?? "5");
+const REPLICA_LAG_CHECK_MS = 10_000;
+
+let replicaPool: Pool | null = null;
+let replicaHealthy = true;
+let lastLagCheck = 0;
+
+function getReplicaPool(): Pool | null {
+  const url = process.env.DATABASE_REPLICA_URL;
+  if (!url) return null;
+  if (!replicaPool) {
+    replicaPool = new Pool({
+      connectionString: url,
+      max: parseInt(process.env.DB_POOL_SIZE ?? "10", 10),
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000,
+      ssl: serverConfig.stellar.network === "mainnet" ? { rejectUnauthorized: true } : false,
+    });
+    replicaPool.on("error", (err) => console.error("[db] Replica pool error:", err));
+  }
+  return replicaPool;
+}
+
+/** Replication lag in seconds (0 when the replica is fully caught up). */
+export async function getReplicaLagSeconds(): Promise<number | null> {
+  const replica = getReplicaPool();
+  if (!replica) return null;
+  const { rows } = await replica.query<{ lag: string | null }>(
+    `SELECT CASE WHEN pg_last_wal_receive_lsn() = pg_last_wal_replay_lsn() THEN 0
+            ELSE EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp()) END AS lag`
+  );
+  return rows[0]?.lag == null ? 0 : Number(rows[0].lag);
+}
+
+async function replicaUsable(): Promise<boolean> {
+  if (Date.now() - lastLagCheck > REPLICA_LAG_CHECK_MS) {
+    lastLagCheck = Date.now();
+    try {
+      const lag = await getReplicaLagSeconds();
+      replicaHealthy = lag !== null && lag <= REPLICA_MAX_LAG_S;
+      if (!replicaHealthy)
+        console.warn(`[db] Replica lag ${lag}s > ${REPLICA_MAX_LAG_S}s; using primary`);
+    } catch (err) {
+      replicaHealthy = false;
+      console.warn("[db] Replica lag check failed; using primary:", err);
+    }
+  }
+  return replicaHealthy;
+}
+
+/**
+ * Execute a read-only query on the nearest read replica. Falls back to the
+ * primary when no replica is configured, lag exceeds DB_REPLICA_MAX_LAG_S,
+ * or the replica query fails. Never use for writes.
+ */
+export async function readQuery<T extends QueryResultRow = QueryResultRow>(
+  text: string,
+  params?: unknown[]
+): Promise<QueryResult<T>> {
+  const replica = getReplicaPool();
+  if (!replica || !(await replicaUsable())) return query<T>(text, params);
+  const started = Date.now();
+  try {
+    const result = await withSpan(
+      "db.query",
+      { "db.system": "postgresql", "db.statement": redactSql(text), "db.replica": true },
+      () => replica.query<T>(text, params)
+    );
+    recordQuery(text, Date.now() - started);
+    return result;
+  } catch (err) {
+    recordQuery(text, Date.now() - started, true);
+    console.warn("[db] Replica query failed; retrying on primary:", err);
+    return query<T>(text, params);
   }
 }

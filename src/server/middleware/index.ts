@@ -8,6 +8,7 @@ import { isSessionRevoked, hashToken } from "@/lib/sessions";
 import { resolveRateLimitPolicy, rateLimitKey } from "@/lib/rate-limit-policies";
 import logger from "@/lib/logger";
 import { runWithCorrelationId } from "@/lib/correlation";
+import { withSpan } from "@/lib/tracing";
 import { sanitizeBody } from "@/lib/sanitize";
 import { isAppError, internalError } from "@/lib/errors";
 import { withAuthorization } from "./authorization";
@@ -38,7 +39,8 @@ export function withErrorHandler(handler: Handler): Handler {
     const { pathname } = new URL(req.url);
     const start = Date.now();
 
-    return runWithCorrelationId(correlationId, async () => {
+    const spanAttrs = { "http.method": req.method, "http.route": pathname };
+    return runWithCorrelationId(correlationId, () => withSpan(`${req.method} ${pathname}`, spanAttrs, async () => {
       const reqLogger = logger.child({ correlationId });
       try {
         const response = await handler(req, ctx);
@@ -76,7 +78,7 @@ export function withErrorHandler(handler: Handler): Handler {
         res.headers.set("x-correlation-id", correlationId);
         return res;
       }
-    });
+    }));
   };
 }
 

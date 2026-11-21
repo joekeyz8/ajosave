@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import type { Circle, Member, CircleStatus, CircleFilters } from "@/types";
 import type { CreateCircleInput } from "@/types/schemas";
-import { transaction, query } from "@/lib/db";
+import { transaction, query, readQuery } from "@/lib/db";
 
 // Exchange rate — replace with live FX feed in production
 const NGN_PER_USDC = 1600;
@@ -98,7 +98,7 @@ export async function getCircleById(id: string): Promise<Circle | null> {
 
 export async function listOpenCircles(): Promise<Circle[]> {
   try {
-    const result = await query<{
+    const result = await readQuery<{
       id: string;
       name: string;
       creator_id: string;
@@ -200,7 +200,7 @@ export async function listCircles(filters: CircleFilters = {}): Promise<Circle[]
       ORDER BY created_at DESC
     `;
 
-    const result = await query<{
+    const result = await readQuery<{
       id: string;
       name: string;
       creator_id: string;

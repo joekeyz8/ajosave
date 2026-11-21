@@ -3,6 +3,7 @@ import { serverConfig } from "@/server/config";
 import type { SupportedCurrency } from "@/types";
 import { toSmallestUnit } from "./currency";
 import { getCorrelationId } from "./correlation";
+import { instrumentHttpClient } from "./tracing";
 
 const client = axios.create({
   baseURL: "https://api.paystack.co",
@@ -16,6 +17,9 @@ client.interceptors.request.use((config) => {
   if (correlationId) config.headers["x-correlation-id"] = correlationId;
   return config;
 });
+
+// Child span per Paystack HTTP call (#479)
+instrumentHttpClient(client, "paystack");
 
 // Map our currency codes to Paystack currency codes
 const PAYSTACK_CURRENCY_MAP: Record<SupportedCurrency, string> = {
