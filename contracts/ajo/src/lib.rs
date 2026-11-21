@@ -24,7 +24,7 @@ use soroban_sdk::{
 // ─── Schema version ───────────────────────────────────────────────────────────
 /// Bump this constant whenever the storage layout changes in a new deployment.
 /// `migrate()` uses it to gate and sequence migration logic.
-const STORAGE_VERSION: u32 = 2;
+const STORAGE_VERSION: u32 = 3;
 
 // ─── TTL Configuration ────────────────────────────────────────────────────────
 const DAY_IN_LEDGERS: u32 = 17280;
@@ -39,6 +39,11 @@ const MIN_TTL_EXTEND_TO: u32 = DAY_IN_LEDGERS;
 // ─── Missed contribution policy ───────────────────────────────────────────────
 /// Default number of missed cycles tolerated before a member is suspended.
 const DEFAULT_MAX_MISSED: u32 = 1;
+/// Reinstatement penalty per missed cycle, in basis points of the
+/// contribution amount (issue #446). 1000 bps = 10%.
+const REINSTATEMENT_PENALTY_BPS: i128 = 1_000;
+/// Lifetime of a pending multi-sig payout approval (issue #448).
+const PAYOUT_APPROVAL_EXPIRY_SECS: u64 = 172_800; // 48 hours
 
 // ─── Upgrade governance ───────────────────────────────────────────────────────
 /// Minimum delay (seconds) between `propose_upgrade` and a matching `upgrade`
@@ -120,8 +125,35 @@ pub enum DataKey {
     MissedContributions(Address),    // persistent (legacy v1): lifetime missed count
     Suspended(Address),              // instance (legacy v1): member suspended flag
 
-    // ─── Packed per-member state (storage v2, issue #254) ────────────────────────
-    MemberStats(Address),            // persistent: all per-member counters in one entry
+    // ─── Packed per-member state (storage v2, issue #254; v3, issue #447) ────────
+    MemberStats(Address),            // persistent: all per-member state in one entry
+
+    // ─── Multi-sig payout policy (issue #448) - instance storage ────────────────
+    PayoutThreshold,                 // i128: pots above this need M-of-N approval
+    PayoutSigners,                   // Vec<Address>: N approvers
+    PayoutRequiredSigs,              // u32: M
+    PayoutApproval(u32),             // cycle → PendingPayoutApproval
+}
+
+/// Pending M-of-N approval for a large payout (issue #448).
+#[contracttype]
+#[derive(Clone)]
+pub struct PendingPayoutApproval {
+    pub approvers: Vec<Address>,
+    pub expires_at: u64,
+}
+
+/// Storage v2 layout of `MemberStats`, kept only so `migrate()` can decode
+/// existing entries when upgrading to v3.
+#[contracttype]
+#[derive(Clone)]
+pub struct MemberStatsV2 {
+    pub reputation: u32,
+    pub circles_completed: u32,
+    pub on_time_contributions: u32,
+    pub total_contributions: u32,
+    pub missed_contributions: u32,
+    pub suspended: bool,
 }
 
 /// Packed per-member persistent state (storage v2, issue #254).
@@ -141,6 +173,11 @@ pub struct MemberStats {
     pub total_contributions: u32,
     pub missed_contributions: u32,
     pub suspended: bool,
+    /// Last cycle the member paid for (storage v3, issue #447). Replaces the
+    /// temporary-storage read used as the duplicate-contribution guard.
+    pub last_cycle: u32,
+    /// Missed cycles not yet paid back via `reinstate_member` (issue #446).
+    pub unpaid_missed: u32,
 }
 
 impl MemberStats {
@@ -152,6 +189,8 @@ impl MemberStats {
             total_contributions: 0,
             missed_contributions: 0,
             suspended: false,
+            last_cycle: 0,
+            unpaid_missed: 0,
         }
     }
 }
@@ -276,6 +315,9 @@ impl AjoContract {
 
         // Use temporary storage for contribution tracking (lower ledger fees)
         Self::set_temp_contribution(&env, &member, 1, true);
+        let mut stats = Self::member_stats(&env, &member);
+        stats.last_cycle = 1;
+        Self::store_member_stats(&env, &member, &stats);
 
         members.push_back(member.clone());
         env.storage().instance().set(&DataKey::Members, &members);
@@ -323,13 +365,13 @@ impl AjoContract {
         if !members.contains(&member) {
             panic!("not a member");
         }
-        if Self::is_suspended(env.clone(), member.clone()) {
+        // Packed per-member record (issue #447): one read covers the
+        // suspension flag and the duplicate-contribution guard.
+        let mut stats = Self::member_stats(&env, &member);
+        if stats.suspended {
             panic!("member is suspended");
         }
-
-        // Check contribution using temporary storage
-        let already_paid: bool = Self::get_temp_contribution(&env, &member, current_cycle);
-        if already_paid {
+        if stats.last_cycle == current_cycle {
             panic!("already contributed this cycle");
         }
 
@@ -352,22 +394,23 @@ impl AjoContract {
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&member, &env.current_contract_address(), &amount);
 
-        // Store contribution in temporary storage (lower ledger fees)
-        Self::set_temp_contribution(&env, &member, current_cycle, true);
-
         let next_payout_time: u64 = env.storage().instance().get(&DataKey::NextPayoutTime).expect("not initialized");
         let is_on_time = env.ledger().timestamp() < next_payout_time;
 
-        // Packed per-member record (storage v2, issue #254): one read/write
-        // instead of separate OnTime/Total entries.
-        let mut stats = Self::member_stats(&env, &member);
+        // Single packed write (issue #447): counters, last_cycle and
+        // reputation are updated together.
         if is_on_time {
             stats.on_time_contributions += 1;
         }
         stats.total_contributions += 1;
+        stats.last_cycle = current_cycle;
+        stats.reputation = Self::compute_reputation(&stats);
         Self::store_member_stats(&env, &member, &stats);
 
-        Self::update_reputation(&env, &member);
+        env.events().publish(
+            (Symbol::new(&env, "reputation_updated"),),
+            (member.clone(), stats.reputation),
+        );
 
         env.events().publish(
             (Symbol::new(&env, "contribution_made"),),
@@ -380,6 +423,7 @@ impl AjoContract {
 
     /// Set payout order. Admin-only.
     pub fn set_payout_order(env: Env, order: Vec<u32>) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -455,8 +499,8 @@ impl AjoContract {
         let max_members: u32 = env.storage().instance().get(&DataKey::MaxMembers).expect("not initialized");
 
         for m in members.iter() {
-            // Check contribution using temporary storage
-            let paid: bool = Self::get_temp_contribution(&env, &m, current_cycle);
+            // Packed per-member record (issue #447) is the contribution flag.
+            let paid: bool = Self::member_stats(&env, &m).last_cycle == current_cycle;
             if !paid {
                 env.events().publish((Symbol::new(&env, "member_defaulted"),), (m.clone(), current_cycle));
                 Self::record_missed_contribution(&env, &m, current_cycle);
@@ -489,6 +533,7 @@ impl AjoContract {
         let pot = contribution
             .checked_mul(max_members as i128)
             .expect("pot overflow");
+        Self::enforce_payout_multisig(&env, current_cycle, pot);
 
         // ─── Effects before external call ─────────────────────────────────────
         if current_cycle >= max_members {
@@ -528,7 +573,21 @@ impl AjoContract {
     /// - On-time contribution rate (70% weight)
     /// - Number of completed circles (30% weight)
     fn update_reputation(env: &Env, member: &Address) {
-        let stats = Self::member_stats(env, member);
+        let mut updated = Self::member_stats(env, member);
+        let reputation = Self::compute_reputation(&updated);
+
+        // Update the packed per-member entry and extend its TTL.
+        updated.reputation = reputation;
+        Self::store_member_stats(env, member, &updated);
+
+        env.events().publish(
+            (Symbol::new(&env, "reputation_updated"),),
+            (member.clone(), reputation),
+        );
+    }
+
+    /// Pure reputation score (0-100) from packed member stats.
+    fn compute_reputation(stats: &MemberStats) -> u32 {
         let on_time: u32 = stats.on_time_contributions;
         let total: u32 = if stats.total_contributions > 0 {
             stats.total_contributions
@@ -551,26 +610,18 @@ impl AjoContract {
             circles_completed * 3
         };
 
-        let reputation = on_time_score + circles_score;
-
-        // Update the packed per-member entry and extend its TTL.
-        let mut updated = stats;
-        updated.reputation = reputation;
-        Self::store_member_stats(env, member, &updated);
-
-        env.events().publish(
-            (Symbol::new(&env, "reputation_updated"),),
-            (member.clone(), reputation),
-        );
+        on_time_score + circles_score
     }
 
     /// Read-only: get reputation score for a member (0-100)
     pub fn get_reputation(env: Env, member: Address) -> u32 {
+        Self::extend_instance_ttl(&env);
         Self::member_stats(&env, &member).reputation
     }
 
     /// Read-only: get detailed reputation stats for a member
     pub fn get_reputation_stats(env: Env, member: Address) -> (u32, u32, u32, u32) {
+        Self::extend_instance_ttl(&env);
         let stats = Self::member_stats(&env, &member);
         (
             stats.reputation,
@@ -588,6 +639,7 @@ impl AjoContract {
     /// To add a future migration: bump `STORAGE_VERSION` and add an
     /// `if from < N { … }` block below.
     pub fn migrate(env: Env) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -665,6 +717,8 @@ impl AjoContract {
                         total_contributions: total_contributions.unwrap_or(0),
                         missed_contributions: missed_contributions.unwrap_or(0),
                         suspended,
+                        last_cycle: 0,
+                        unpaid_missed: 0,
                     };
                     Self::store_member_stats(&env, &member, &stats);
                 }
@@ -687,8 +741,44 @@ impl AjoContract {
             }
         }
 
+        // ── v2 → v3 (issue #447) ──────────────────────────────────────────────
+        // Add `last_cycle` / `unpaid_missed` to each packed `MemberStats`.
+        // Entries written by the v1 → v2 block above already use v3 layout.
+        if from == 2 {
+            let members: Vec<Address> = env
+                .storage()
+                .instance()
+                .get(&DataKey::Members)
+                .unwrap_or(Vec::new(&env));
+            let current_cycle: u32 = env.storage().instance().get(&DataKey::CurrentCycle).unwrap_or(0);
+            for member in members.iter() {
+                let key = DataKey::MemberStats(member.clone());
+                let old: Option<MemberStatsV2> = env.storage().persistent().get(&key);
+                if let Some(old) = old {
+                    let last_cycle = if current_cycle > 0
+                        && Self::get_temp_contribution(&env, &member, current_cycle)
+                    {
+                        current_cycle
+                    } else {
+                        0
+                    };
+                    let stats = MemberStats {
+                        reputation: old.reputation,
+                        circles_completed: old.circles_completed,
+                        on_time_contributions: old.on_time_contributions,
+                        total_contributions: old.total_contributions,
+                        missed_contributions: old.missed_contributions,
+                        suspended: old.suspended,
+                        last_cycle,
+                        unpaid_missed: 0,
+                    };
+                    Self::store_member_stats(&env, &member, &stats);
+                }
+            }
+        }
+
         // ── Add future migration blocks here ─────────────────────────────────
-        // if from < 3 { … }
+        // if from < 4 { … }
 
         env.storage().instance().set(&DataKey::StorageVersion, &STORAGE_VERSION);
 
@@ -701,6 +791,7 @@ impl AjoContract {
     /// cannot execute until `UPGRADE_TIMELOCK_SECS` has elapsed. Proposing a
     /// new hash replaces any previous pending proposal.
     pub fn propose_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -716,6 +807,7 @@ impl AjoContract {
 
     /// Cancel a pending upgrade proposal. Admin-only. No-op if none pending.
     pub fn cancel_upgrade(env: Env) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -732,6 +824,7 @@ impl AjoContract {
     /// boundary for #55: an admin can no longer swap the contract WASM in a
     /// single, immediate call.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -763,6 +856,7 @@ impl AjoContract {
 
     /// Emergency pause — admin-only. Halts `contribute` and `payout`.
     pub fn pause(env: Env) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &true);
@@ -771,6 +865,7 @@ impl AjoContract {
 
     /// Lift emergency pause — admin-only.
     pub fn unpause(env: Env) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
@@ -781,6 +876,7 @@ impl AjoContract {
     // ── Read-only ─────────────────────────────────────────────────────────────
 
     pub fn get_state(env: Env) -> (u32, u32, u64, bool, bool) {
+        Self::extend_instance_ttl(&env);
         let current_cycle: u32 = env.storage().instance().get(&DataKey::CurrentCycle).unwrap_or(0);
         let max_members: u32 = env.storage().instance().get(&DataKey::MaxMembers).unwrap_or(0);
         let next_payout_time: u64 = env.storage().instance().get(&DataKey::NextPayoutTime).unwrap_or(0);
@@ -790,6 +886,7 @@ impl AjoContract {
     }
 
     pub fn get_members(env: Env) -> Vec<Address> {
+        Self::extend_instance_ttl(&env);
         env.storage().instance().get(&DataKey::Members).unwrap_or(vec![&env])
     }
 
@@ -797,10 +894,12 @@ impl AjoContract {
     /// use, so integrators can verify a deployed circle's asset before
     /// trusting it with funds instead of relying solely on client-side config.
     pub fn get_token(env: Env) -> Address {
+        Self::extend_instance_ttl(&env);
         env.storage().instance().get(&DataKey::Token).expect("not initialized")
     }
 
     pub fn get_payout_order(env: Env) -> Vec<u32> {
+        Self::extend_instance_ttl(&env);
         env.storage().instance().get(&DataKey::PayoutOrder).unwrap_or(vec![&env])
     }
 
@@ -810,6 +909,7 @@ impl AjoContract {
     /// `true` means the member has contributed for `cycle` and `false` means
     /// they have not yet (or defaulted).
     pub fn get_contribution_status(env: Env, cycle: u32) -> Vec<(Address, bool)> {
+        Self::extend_instance_ttl(&env);
         let members: Vec<Address> = env
             .storage()
             .instance()
@@ -818,8 +918,10 @@ impl AjoContract {
 
         let mut result: Vec<(Address, bool)> = Vec::new(&env);
         for member in members.iter() {
-            // Read from temporary storage
-            let paid: bool = Self::get_temp_contribution(&env, &member, cycle);
+            // Packed record (issue #447) covers contributions since v3;
+            // temporary storage still holds join-time and pre-v3 entries.
+            let paid: bool = Self::member_stats(&env, &member).last_cycle == cycle
+                || Self::get_temp_contribution(&env, &member, cycle);
             result.push_back((member, paid));
         }
         result
@@ -828,6 +930,7 @@ impl AjoContract {
     /// Propose a new admin. Only the current admin can call this.
     /// The proposed admin must call `accept_admin` to complete the transfer.
     pub fn propose_admin(env: Env, new_admin: Address) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
         env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
@@ -836,6 +939,7 @@ impl AjoContract {
 
     /// Accept the admin role. Only the pending admin can call this.
     pub fn accept_admin(env: Env) {
+        Self::extend_instance_ttl(&env);
         let pending: Address = env
             .storage()
             .instance()
@@ -850,6 +954,7 @@ impl AjoContract {
 
     /// Set TTL configuration. Admin-only.
     pub fn set_ttl_config(env: Env, threshold: u32, extend_to: u32) {
+        Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -891,20 +996,27 @@ impl AjoContract {
 
     /// Current missed-contribution threshold.
     pub fn get_missed_policy(env: Env) -> u32 {
+        Self::extend_instance_ttl(&env);
         env.storage().instance().get(&DataKey::MaxMissedContributions).unwrap_or(DEFAULT_MAX_MISSED)
     }
 
     /// Lifetime missed contributions for a member.
     pub fn get_missed_contributions(env: Env, member: Address) -> u32 {
+        Self::extend_instance_ttl(&env);
         Self::member_stats(&env, &member).missed_contributions
     }
 
     /// Whether a member is suspended from contributing in this circle.
     pub fn is_suspended(env: Env, member: Address) -> bool {
+        Self::extend_instance_ttl(&env);
         Self::member_stats(&env, &member).suspended
     }
 
-    /// Lift a suspension. Admin-only.
+    /// Reinstate a suspended member (issue #446). Requires admin and member
+    /// auth; the member pays every unpaid missed contribution plus a penalty of
+    /// `REINSTATEMENT_PENALTY_BPS` of the contribution per missed cycle.
+    ///
+    /// Emits `member_reinstated` with `(member, missed_cycles_paid, penalty_paid)`.
     pub fn reinstate_member(env: Env, member: Address) {
         Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
@@ -915,17 +1027,149 @@ impl AjoContract {
             panic!("not a member");
         }
         let mut stats = Self::member_stats(&env, &member);
-        if stats.suspended {
-            stats.suspended = false;
-            Self::store_member_stats(&env, &member, &stats);
+        if !stats.suspended {
+            panic!("member is not suspended");
         }
-        env.events().publish((Symbol::new(&env, "member_reinstated"),), (member,));
+        member.require_auth();
+
+        let contribution: i128 = env.storage().instance().get(&DataKey::ContributionAmount).expect("not initialized");
+        let missed_cycles_paid = stats.unpaid_missed;
+        let missed_amount = contribution
+            .checked_mul(missed_cycles_paid as i128)
+            .expect("amount overflow");
+        let penalty_paid = missed_amount
+            .checked_mul(REINSTATEMENT_PENALTY_BPS)
+            .expect("amount overflow")
+            / 10_000;
+        let total = missed_amount.checked_add(penalty_paid).expect("amount overflow");
+
+        stats.suspended = false;
+        stats.unpaid_missed = 0;
+        Self::store_member_stats(&env, &member, &stats);
+
+        if total > 0 {
+            let token: Address = env.storage().instance().get(&DataKey::Token).expect("not initialized");
+            token::Client::new(&env, &token).transfer(&member, &env.current_contract_address(), &total);
+        }
+
+        env.events().publish(
+            (Symbol::new(&env, "member_reinstated"),),
+            (member, missed_cycles_paid, penalty_paid),
+        );
+    }
+
+    // ── Multi-sig payout policy (issue #448) ──────────────────────────────────
+
+    /// Configure the multi-sig payout policy. Admin-only, and only during
+    /// initialisation (before the circle starts). Payouts whose pot exceeds
+    /// `payout_threshold` then require `required` of `signers` to call
+    /// `approve_payout` within 48 hours before `payout` executes.
+    pub fn configure_payout_multisig(
+        env: Env,
+        payout_threshold: i128,
+        signers: Vec<Address>,
+        required: u32,
+    ) {
+        Self::extend_instance_ttl(&env);
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
+        admin.require_auth();
+
+        let current_cycle: u32 = env.storage().instance().get(&DataKey::CurrentCycle).expect("not initialized");
+        if current_cycle > 0 {
+            panic!("circle already started");
+        }
+        if payout_threshold <= 0 {
+            panic!("payout_threshold must be positive");
+        }
+        if required == 0 || required > signers.len() {
+            panic!("required must be in 1..=signers");
+        }
+        for (i, s) in signers.iter().enumerate() {
+            if signers.first_index_of(&s) != Some(i as u32) {
+                panic!("duplicate signer");
+            }
+        }
+
+        env.storage().instance().set(&DataKey::PayoutThreshold, &payout_threshold);
+        env.storage().instance().set(&DataKey::PayoutSigners, &signers);
+        env.storage().instance().set(&DataKey::PayoutRequiredSigs, &required);
+        env.events().publish(
+            (Symbol::new(&env, "payout_multisig_configured"),),
+            (payout_threshold, signers.len(), required),
+        );
+    }
+
+    /// Approve the payout for the current cycle as one of the multi-sig
+    /// signers. The pending approval expires 48 hours after the first signature.
+    pub fn approve_payout(env: Env, signer: Address) {
+        Self::extend_instance_ttl(&env);
+        signer.require_auth();
+
+        let signers: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::PayoutSigners)
+            .expect("multisig not configured");
+        if !signers.contains(&signer) {
+            panic!("not a payout signer");
+        }
+        let cycle: u32 = env.storage().instance().get(&DataKey::CurrentCycle).expect("not initialized");
+        if cycle == 0 {
+            panic!("circle not started");
+        }
+
+        let key = DataKey::PayoutApproval(cycle);
+        let now = env.ledger().timestamp();
+        let mut pending: PendingPayoutApproval = match env.storage().instance().get::<_, PendingPayoutApproval>(&key) {
+            Some(p) if p.expires_at > now => p,
+            _ => PendingPayoutApproval {
+                approvers: Vec::new(&env),
+                expires_at: now.checked_add(PAYOUT_APPROVAL_EXPIRY_SECS).expect("expiry overflow"),
+            },
+        };
+        if pending.approvers.contains(&signer) {
+            panic!("already approved");
+        }
+        pending.approvers.push_back(signer.clone());
+        env.storage().instance().set(&key, &pending);
+        env.events().publish(
+            (Symbol::new(&env, "payout_approved"),),
+            (signer, cycle, pending.approvers.len()),
+        );
+    }
+
+    /// Pending approval for a cycle's payout, if any: `(approvals, expires_at)`.
+    pub fn get_payout_approval(env: Env, cycle: u32) -> Option<(u32, u64)> {
+        Self::extend_instance_ttl(&env);
+        env.storage()
+            .instance()
+            .get::<_, PendingPayoutApproval>(&DataKey::PayoutApproval(cycle))
+            .map(|p| (p.approvers.len(), p.expires_at))
+    }
+
+    /// Panics unless a pot above the configured threshold has M-of-N
+    /// unexpired approvals for `cycle`. Consumes the approval on success.
+    fn enforce_payout_multisig(env: &Env, cycle: u32, pot: i128) {
+        let threshold: Option<i128> = env.storage().instance().get(&DataKey::PayoutThreshold);
+        if !matches!(threshold, Some(t) if pot > t) {
+            return;
+        }
+        let required: u32 = env.storage().instance().get(&DataKey::PayoutRequiredSigs).expect("multisig not configured");
+        let key = DataKey::PayoutApproval(cycle);
+        let pending: Option<PendingPayoutApproval> = env.storage().instance().get(&key);
+        match pending {
+            Some(p) if p.expires_at > env.ledger().timestamp() && p.approvers.len() >= required => {
+                env.storage().instance().remove(&key);
+            }
+            _ => panic!("multisig approval required"),
+        }
     }
 
     fn record_missed_contribution(env: &Env, member: &Address, cycle: u32) {
         let mut stats = Self::member_stats(env, member);
         let already_suspended = stats.suspended;
         stats.missed_contributions = stats.missed_contributions.saturating_add(1);
+        stats.unpaid_missed = stats.unpaid_missed.saturating_add(1);
         // Missing a cycle counts against on-time reputation.
         stats.total_contributions = stats.total_contributions.saturating_add(1);
         let missed = stats.missed_contributions;
@@ -1374,3 +1618,6 @@ mod fuzz_tests;
 
 #[cfg(test)]
 mod policy_tests;
+
+#[cfg(test)]
+mod hardening_tests;

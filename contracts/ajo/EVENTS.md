@@ -31,6 +31,9 @@ function's doc comment here alongside the code change.
 | `CircleResumed` | `()` (no data) | `unpause` |
 | `admin_proposed` | `(admin: Address, new_admin: Address)` | `propose_admin` |
 | `admin_transferred` | `(old_admin: Address, new_admin: Address)` | `accept_admin` |
+| `member_reinstated` | `(member: Address, missed_cycles_paid: u32, penalty_paid: i128)` | `reinstate_member` |
+| `payout_multisig_configured` | `(payout_threshold: i128, signers: u32, required: u32)` | `configure_payout_multisig` |
+| `payout_approved` | `(signer: Address, cycle: u32, approvals: u32)` | `approve_payout` |
 
 ## Known compatibility gap (found while adding this reference)
 

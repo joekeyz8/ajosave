@@ -81,6 +81,25 @@ and document the choice in the post-deployment record.
       variables in plaintext, or chat logs; only the public address is
       recorded in docs
 
+### 3a. On-chain multi-sig for large payouts (issue #448)
+
+Payouts above `payout_threshold` require M-of-N signer approvals on-chain,
+independent of how the admin key itself is custodied.
+
+- [ ] Choose `payout_threshold` (token base units, e.g. 10,000 USDC =
+      `100_000_000_000` at 7 decimals) and record it
+- [ ] Generate N signer keys on separate hardware (HSM or hardware wallet);
+      signers are distinct from the admin, deployer and member addresses
+- [ ] Choose M (at least 2) and record the full signer list
+- [ ] Immediately after `initialize` and **before any member joins**, call
+      `configure_payout_multisig(payout_threshold, signers, M)` — it is
+      rejected once the circle has started
+- [ ] Rehearse on testnet: M signers call `approve_payout(signer)` within
+      48 hours, then the admin calls `payout`; confirm an expired or
+      under-signed approval makes `payout` fail
+- [ ] Verify with `get_payout_approval(cycle)` that approvals are cleared
+      after each executed payout
+
 ## 4. Initial parameter review
 
 `initialize` runs exactly once (subsequent calls panic with

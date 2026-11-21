@@ -76,8 +76,8 @@ fn missed_policy_threshold_is_respected_and_reinstate_works() {
     assert_eq!(client.get_missed_contributions(&late), 1);
     assert!(!client.is_suspended(&late));
 
-    client.reinstate_member(&late);
-    assert!(!client.is_suspended(&late));
+    // Reinstatement is only for suspended members (issue #446).
+    assert!(client.try_reinstate_member(&late).is_err());
 }
 
 #[test]
