@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useId } from "react";
 import styles from "./EmptyState.module.css";
 
 interface Cta {
@@ -21,12 +24,17 @@ export function EmptyState({
   ctas = [],
   illustration = "circles",
 }: EmptyStateProps) {
+  // Associate the region with its heading so screen readers announce the
+  // empty state as a labelled group (in addition to the role="img" alt text
+  // on the illustration itself).
+  const headingId = useId();
+
   return (
-    <div className={styles.empty} role="status">
+    <div className={styles.empty} role="status" aria-labelledby={headingId}>
       <div className={styles.illustration}>
         {illustration === "circles" ? <CirclesIllustration /> : <SearchIllustration />}
       </div>
-      <h2 className={styles.title}>{title}</h2>
+      <h2 id={headingId} className={styles.title}>{title}</h2>
       <p className={styles.description}>{description}</p>
       {ctas.length > 0 && (
         <div className={styles.ctas}>

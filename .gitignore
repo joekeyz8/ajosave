@@ -34,12 +34,19 @@ coverage/
 test-results/
 *.test-results/
 
-# ─── Jest / Vitest snapshots ──────────────────────────────────────────────────
+# ─── Jest / Vitest snapshots & generated test artifacts ──────────────────────
+# Covers inline `__snapshots__/`, `*.snap`, and any ad-hoc test-snapshot output
+# directories produced by test runners (e.g. "testsnapshot" / "test-snapshots").
 **/__snapshots__/
 **/*.snap
+**/*.snapshots/
+test-snapshot/
+test-snapshots/
+**/test-snapshots/
 
 # ─── Playwright ───────────────────────────────────────────────────────────────
 playwright-report/
+playwright/.cache/
 # Actual screenshots from visual regression runs (only baselines are committed)
 e2e/visual/__snapshots__/**/*-actual.png
 e2e/visual/__snapshots__/**/*-diff.png
@@ -57,3 +64,6 @@ contracts/target/
 # ─── Misc ─────────────────────────────────────────────────────────────────────
 *.tgz
 .cache/
+.eslintcache
+.next/cache/
+.turbo/

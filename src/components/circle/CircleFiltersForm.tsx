@@ -5,6 +5,28 @@ import { useCallback, useTransition } from "react";
 import type { CircleFilters } from "@/types";
 import styles from "./CircleFiltersForm.module.css";
 
+/**
+ * Keyboard handler for native `<select>` filter controls.
+ *
+ * Native selects already open on Enter/Space and close on Escape (returning
+ * focus to the trigger). We call `showPicker()` explicitly on Enter/Space so
+ * the open behaviour is deterministic across browsers that support it; older
+ * browsers fall back to the native key behaviour. Escape is left to the user
+ * agent so focus reliably returns to the trigger after closing.
+ */
+function handleSelectKeyDown(e: React.KeyboardEvent<HTMLSelectElement>) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const el = e.currentTarget as HTMLSelectElement & { showPicker?: () => void };
+  if (typeof el.showPicker === "function") {
+    e.preventDefault();
+    try {
+      el.showPicker();
+    } catch {
+      // Picker already open or not currently dismissible — ignore.
+    }
+  }
+}
+
 interface CircleFiltersFormProps {
   /** Current filter values (read from URL search params by the parent). */
   filters: CircleFilters;
@@ -130,6 +152,7 @@ export function CircleFiltersForm({ filters }: CircleFiltersFormProps) {
             className={styles.select}
             defaultValue={filters.status ?? ""}
             onChange={handleStatus}
+            onKeyDown={handleSelectKeyDown}
             aria-label="Filter by status"
           >
             <option value="">All statuses</option>
@@ -149,6 +172,7 @@ export function CircleFiltersForm({ filters }: CircleFiltersFormProps) {
             className={styles.select}
             defaultValue={filters.frequency ?? ""}
             onChange={handleFrequency}
+            onKeyDown={handleSelectKeyDown}
             aria-label="Filter by contribution frequency"
           >
             <option value="">Any frequency</option>
@@ -168,6 +192,7 @@ export function CircleFiltersForm({ filters }: CircleFiltersFormProps) {
             className={styles.select}
             defaultValue={filters.maxMembers?.toString() ?? ""}
             onChange={handleMaxMembers}
+            onKeyDown={handleSelectKeyDown}
             aria-label="Filter by group size"
           >
             <option value="">Any size</option>

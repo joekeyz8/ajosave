@@ -51,8 +51,8 @@
   outline: none;
 }
 
-.input:focus,
-.select:focus {
+.input:focus-visible,
+.select:focus-visible {
   border-color: var(--color-brand-primary);
   box-shadow: 0 0 0 2px rgba(15, 122, 74, 0.25);
 }
@@ -82,6 +82,11 @@
 .resetBtn:hover {
   color: var(--color-text-primary);
   border-color: var(--color-text-secondary);
+}
+
+.resetBtn:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
 }
 
 .loadingIndicator {

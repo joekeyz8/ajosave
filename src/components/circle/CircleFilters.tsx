@@ -4,6 +4,25 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState, useEffect } from "react";
 import styles from "./CircleFilters.module.css";
 
+/**
+ * Keyboard handler for native `<select>` filter controls — see
+ * CircleFiltersForm for the full rationale. Opens the dropdown explicitly on
+ * Enter/Space via `showPicker()` (where supported) and leaves Escape to the
+ * user agent so focus returns to the trigger after closing.
+ */
+function handleSelectKeyDown(e: React.KeyboardEvent<HTMLSelectElement>) {
+  if (e.key !== "Enter" && e.key !== " ") return;
+  const el = e.currentTarget as HTMLSelectElement & { showPicker?: () => void };
+  if (typeof el.showPicker === "function") {
+    e.preventDefault();
+    try {
+      el.showPicker();
+    } catch {
+      // Picker already open or not currently dismissible — ignore.
+    }
+  }
+}
+
 export function CircleFilters() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -42,6 +61,19 @@ export function CircleFilters() {
     return () => clearTimeout(timer);
   }, [search, searchParams, updateFilters]);
 
+  const hasActiveFilters =
+    !!search || !!frequency || !!minAmount || !!maxAmount || !!currency || !!status;
+
+  const handleClear = useCallback(() => {
+    setSearch("");
+    setFrequency("");
+    setMinAmount("");
+    setMaxAmount("");
+    setCurrency("");
+    setStatus("");
+    router.push("/circles");
+  }, [router]);
+
   return (
     <div className={styles.filters}>
       <div className={`${styles.filterGroup} ${styles.searchWrapper}`}>
@@ -66,6 +98,7 @@ export function CircleFilters() {
             setFrequency(e.target.value);
             updateFilters({ frequency: e.target.value });
           }}
+          onKeyDown={handleSelectKeyDown}
         >
           <option value="">All Frequencies</option>
           <option value="weekly">Weekly</option>
@@ -84,6 +117,7 @@ export function CircleFilters() {
             setStatus(e.target.value);
             updateFilters({ status: e.target.value });
           }}
+          onKeyDown={handleSelectKeyDown}
         >
           <option value="">All Statuses</option>
           <option value="open">Open</option>
@@ -107,6 +141,7 @@ export function CircleFilters() {
               setCurrency(e.target.value);
               updateFilters({ currency: e.target.value });
             }}
+            onKeyDown={handleSelectKeyDown}
           >
             <option value="">Any</option>
             <option value="NGN">NGN</option>
@@ -143,6 +178,19 @@ export function CircleFilters() {
           />
         </div>
       </div>
+
+      {hasActiveFilters && (
+        <div className={styles.clearGroup}>
+          <button
+            type="button"
+            className={styles.clearBtn}
+            onClick={handleClear}
+            aria-label="Clear all filters"
+          >
+            Clear filters
+          </button>
+        </div>
+      )}
     </div>
   );
 }
