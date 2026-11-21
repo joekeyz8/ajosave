@@ -137,3 +137,17 @@ start / the feature will not work. **Optional** = has a safe default.
 (used in `instrumentation.ts` to branch on edge vs. Node.js runtime and to
 skip background service startup during `next build`) — they are not meant
 to be set manually and are not part of `.env.example`.
+
+## Cost monitoring (GitHub Actions)
+
+These variables are consumed by `.github/workflows/stellar-fee-alert.yml`, not by the Next.js application. Configure them as GitHub Actions repository variables/secrets rather than adding them to the deployed app environment:
+
+| Name | Type | Description |
+|---|---|---|
+| `STELLAR_NETWORK` | Actions variable | Network label shown in fee alerts (`mainnet` or `testnet`). |
+| `STELLAR_HORIZON_URL` | Actions variable | Horizon API for the same network as the platform fee-paying account. |
+| `STELLAR_FEE_MONITOR_ACCOUNT` | Actions variable | Public G... address of the platform account whose transaction fees are monitored. |
+| `STELLAR_DAILY_FEE_THRESHOLD_XLM` | Actions variable | Daily fee threshold in XLM, with up to 7 decimal places. |
+| `SLACK_WEBHOOK_URL` | Actions secret | Incoming Slack webhook used to deliver cost alerts (shared with existing workflows). |
+
+The fee monitor uses only the public account address; never configure `STELLAR_SERVER_SECRET_KEY` as a workflow variable for this job. See [Metrics Alerting](./METRICS_ALERTING.md#cost-alerting) for setup and operational checks.
