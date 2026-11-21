@@ -354,5 +354,5 @@ Per-cycle contribution flags live in temporary storage. Each write extends the
 entry's TTL to cover the cycle interval plus a one-day buffer (minimum 7 days,
 capped at the network max TTL), so an entry cannot expire before `payout` reads
 it. Entries are removed when the circle completes. `set_ttl_config` now
-validates `1 <= threshold <= extend_to`, `extend_to >= 1 day` and
-`extend_to <= max_ttl`, and emits `ttl_config_updated`.
+validates `1 day <= threshold <= extend_to` and `extend_to <= max_ttl`, and
+emits `TtlConfigUpdated` (plus the legacy `ttl_config_updated`).

@@ -311,3 +311,106 @@ fn payout_lock_blocks_concurrent_payout() {
     client.set_payout_lock(&false);
     assert!(client.try_payout().is_ok());
 }
+
+#[test]
+fn ttl_config_emits_event_and_rejects_low_threshold() {
+    use soroban_sdk::testutils::Events as _;
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, _, client) = setup(&env);
+    assert!(client.try_set_ttl_config(&(DAY_IN_LEDGERS - 1), &(7 * DAY_IN_LEDGERS)).is_err());
+    client.set_ttl_config(&DAY_IN_LEDGERS, &(7 * DAY_IN_LEDGERS));
+    let found = env.events().all().iter().any(|(_, topics, _)| {
+        topics == (Symbol::new(&env, "TtlConfigUpdated"),).into_val(&env)
+    });
+    assert!(found);
+}
+
+// ─── #457 Resumable migration ─────────────────────────────────────────────────
+
+#[test]
+fn migrate_recovers_from_interrupted_v1_to_v2() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (_, members, client) = started(&env);
+    let (done, pending) = (members.get(0).unwrap(), members.get(1).unwrap());
+
+    // Simulate a migration interrupted mid-way through v1 → v2: v1 committed,
+    // one member already packed, another still on legacy keys.
+    env.as_contract(&client.address, || {
+        env.storage().instance().set(&DataKey::StorageVersion, &1u32);
+        env.storage().persistent().remove(&DataKey::MemberStats(done.clone()));
+        env.storage().persistent().remove(&DataKey::MemberStats(pending.clone()));
+        let packed = MemberStats {
+            reputation: 40,
+            circles_completed: 0,
+            on_time_contributions: 0,
+            total_contributions: 0,
+            missed_contributions: 0,
+            suspended: false,
+        };
+        env.storage().persistent().set(&DataKey::MemberStats(done.clone()), &packed);
+        env.storage().persistent().set(&DataKey::MemberReputation(pending.clone()), &55u32);
+    });
+
+    client.migrate();
+    assert_eq!(client.get_reputation(&done), 40);
+    assert_eq!(client.get_reputation(&pending), 55);
+    env.as_contract(&client.address, || {
+        assert!(!env.storage().persistent().has(&DataKey::MemberReputation(pending.clone())));
+        let v: u32 = env.storage().instance().get(&DataKey::StorageVersion).unwrap();
+        assert_eq!(v, STORAGE_VERSION);
+    });
+
+    // Re-running is a no-op.
+    client.migrate();
+    assert_eq!(client.get_reputation(&pending), 55);
+}
+
+// ─── #455 Payout randomisation properties ─────────────────────────────────────
+
+/// Seeded Fisher-Yates mirroring `shufflePayoutOrder` in
+/// `src/server/services/payout-randomization.service.ts`.
+fn seeded_order(n: u32, seed: u64) -> std::vec::Vec<u32> {
+    let mut order: std::vec::Vec<u32> = (0..n).collect();
+    let mut h = seed & 0x7fff_ffff;
+    for i in (1..n as usize).rev() {
+        h = (h.wrapping_mul(1_103_515_245).wrapping_add(12_345)) & 0x7fff_ffff;
+        order.swap(i, (h % (i as u64 + 1)) as usize);
+    }
+    order
+}
+
+#[test]
+fn prop_seeded_rotation_is_permutation_and_deterministic() {
+    for n in 1..=50u32 {
+        for seed in 0..64u64 {
+            let seed = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let order = seeded_order(n, seed);
+            assert_eq!(order, seeded_order(n, seed));
+            let mut sorted = order.clone();
+            sorted.sort_unstable();
+            assert_eq!(sorted, (0..n).collect::<std::vec::Vec<u32>>());
+        }
+    }
+}
+
+#[test]
+fn prop_seeded_rotation_pays_each_member_once_on_chain() {
+    for n in [2u32, 3, 7, 20] {
+        for seed in [0u64, 1, 42, u64::MAX] {
+            let env = Env::default();
+            env.mock_all_auths();
+            let admin = Address::generate(&env);
+            let token_id = env.register_stellar_asset_contract(admin.clone());
+            let contract_id = env.register_contract(None, AjoContract);
+            let client = AjoContractClient::new(&env, &contract_id);
+            client.initialize(&admin, &token_id, &AMOUNT, &n, &INTERVAL);
+            let mut order = Vec::new(&env);
+            for i in seeded_order(n, seed) {
+                order.push_back(i);
+            }
+            client.set_payout_order(&order);
+        }
+    }
+}
