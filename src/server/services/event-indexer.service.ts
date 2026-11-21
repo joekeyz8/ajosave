@@ -13,7 +13,7 @@
  * Checkpoint: last_indexed_ledger stored in indexer_state per contract.
  */
 
-import { getContractEvents, type ContractEvent } from "@/lib/soroban";
+import { getContractEvents, getCircleState, type ContractEvent } from "@/lib/soroban";
 import { serverConfig } from "@/server/config";
 import { query } from "@/lib/db";
 import { randomUUID } from "crypto";
@@ -77,6 +77,7 @@ export async function pollOnce(): Promise<number> {
   }
 
   if (maxLedger > startLedger) await saveCheckpoint(CONTRACT_ID, maxLedger);
+  await reconcileCircleState(CONTRACT_ID);
   if (processed > 0) console.log(`[event-indexer] Processed ${processed} new event(s) up to ledger ${maxLedger}`);
   return processed;
 }
@@ -239,4 +240,27 @@ async function onCircleCompleted(val: any): Promise<void> {
   // Queue on-chain completion certificates for every member (#241).
   await queueCertificatesForCircle(val.circle_id);
   console.log(`[event-indexer] circle_completed → circle ${val.circle_id} marked completed`);
+}
+
+// ── State reconciliation ──────────────────────────────────────────────────────
+
+/**
+ * Snapshot on-chain state with a single get_circle_state() read and correct
+ * any drift in the circles table (issue #460).
+ */
+export async function reconcileCircleState(contractId: string): Promise<void> {
+  try {
+    const state = await getCircleState(contractId);
+    await query(
+      `UPDATE circles
+          SET current_cycle = $2,
+              status = CASE WHEN $3 = 'completed' THEN 'completed' ELSE status END,
+              updated_at = NOW()
+        WHERE contract_id = $1
+          AND (current_cycle IS DISTINCT FROM $2 OR ($3 = 'completed' AND status != 'completed'))`,
+      [contractId, state.current_cycle, state.status]
+    );
+  } catch (err) {
+    console.error(`[event-indexer] State reconciliation failed for ${contractId}:`, err);
+  }
 }

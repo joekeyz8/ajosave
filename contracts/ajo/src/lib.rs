@@ -132,6 +132,20 @@ pub enum DataKey {
 /// a single persistent entry per member: 5 ledger entries → 1, and the
 /// instance entry no longer grows with suspension flags. Same values, same
 /// public API as storage v1.
+/// Snapshot of circle state for off-chain indexers (see `get_circle_state`).
+#[contracttype]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CircleState {
+    /// One of `forming`, `active`, `paused`, `completed`.
+    pub status: Symbol,
+    pub current_cycle: u32,
+    pub total_members: u32,
+    pub joined_members: u32,
+    pub next_payout_at: u64,
+    pub admin: Address,
+    pub token: Address,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub struct MemberStats {
@@ -787,6 +801,33 @@ impl AjoContract {
         let completed: bool = env.storage().instance().get(&DataKey::Completed).unwrap_or(false);
         let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
         (current_cycle, max_members, next_payout_time, completed, paused)
+    }
+
+    /// Single-call snapshot of all circle state fields for off-chain indexers.
+    /// Bumps instance TTL since a read is an access.
+    pub fn get_circle_state(env: Env) -> CircleState {
+        Self::extend_instance_ttl(&env);
+        let storage = env.storage().instance();
+        let current_cycle: u32 = storage.get(&DataKey::CurrentCycle).unwrap_or(0);
+        let status = if storage.get(&DataKey::Completed).unwrap_or(false) {
+            "completed"
+        } else if storage.get(&DataKey::Paused).unwrap_or(false) {
+            "paused"
+        } else if current_cycle > 0 {
+            "active"
+        } else {
+            "forming"
+        };
+        let members: Vec<Address> = storage.get(&DataKey::Members).unwrap_or(vec![&env]);
+        CircleState {
+            status: Symbol::new(&env, status),
+            current_cycle,
+            total_members: storage.get(&DataKey::MaxMembers).unwrap_or(0),
+            joined_members: members.len(),
+            next_payout_at: storage.get(&DataKey::NextPayoutTime).unwrap_or(0),
+            admin: storage.get(&DataKey::Admin).expect("not initialized"),
+            token: storage.get(&DataKey::Token).expect("not initialized"),
+        }
     }
 
     pub fn get_members(env: Env) -> Vec<Address> {

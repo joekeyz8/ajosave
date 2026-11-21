@@ -18,6 +18,7 @@ Add an entry whenever `contracts/*/src` changes (CI requires this file or the au
 | Date | PR | Change | Re-audit needed? |
 |---|---|---|---|
 | 2026-10-21 | Issue #247 | Return a typed pause error from join, contribute and payout; emit CircleResumed on unpause. | Yes |
+| 2026-11-21 | Issue #460 | Add read-only `get_circle_state` view (bumps instance TTL). | Yes |
 | | | | |
 
 ## Findings
@@ -27,3 +28,4 @@ Add an entry whenever `contracts/*/src` changes (CI requires this file or the au
 | | | | | | |
 
 Use [`FINDING_TEMPLATE.md`](FINDING_TEMPLATE.md) for the detail of each finding.
+The formal per-audit response lives in [`AUDIT_RESPONSE.md`](AUDIT_RESPONSE.md).

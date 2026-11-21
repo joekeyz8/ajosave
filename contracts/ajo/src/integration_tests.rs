@@ -64,6 +64,43 @@ mod integration {
 
     // ─── Tests ────────────────────────────────────────────────────────────────
 
+    /// get_circle_state reflects each lifecycle transition (issue #460).
+    #[test]
+    fn test_get_circle_state_lifecycle() {
+        let f = setup_fixture(2);
+        let Fixture { env, admin, members, token, client, contribution, interval, .. } = &f;
+        let sym = |s: &str| soroban_sdk::Symbol::new(env, s);
+
+        let s = client.get_circle_state();
+        assert_eq!(s.status, sym("forming"));
+        assert_eq!((s.current_cycle, s.total_members, s.joined_members), (0, 2, 0));
+        assert_eq!(s.admin, *admin);
+        assert_eq!(s.token, token.address);
+
+        client.join(&members.get(0).unwrap());
+        assert_eq!(client.get_circle_state().joined_members, 1);
+        client.join(&members.get(1).unwrap());
+        let s = client.get_circle_state();
+        assert_eq!(s.status, sym("active"));
+        assert_eq!((s.current_cycle, s.joined_members), (1, 2));
+        let (_, _, next_payout, _, _) = client.get_state();
+        assert_eq!(s.next_payout_at, next_payout);
+
+        for cycle in 1..=2u32 {
+            for m in members.iter() {
+                client.contribute(&m, contribution);
+            }
+            env.ledger().with_mut(|l| l.timestamp += interval + 1);
+            client.payout();
+            let s = client.get_circle_state();
+            if cycle < 2 {
+                assert_eq!((s.status, s.current_cycle), (sym("active"), 2));
+            } else {
+                assert_eq!(s.status, sym("completed"));
+            }
+        }
+    }
+
     /// Full lifecycle: initialize → join all → contribute each cycle → payout × N → complete
     #[test]
     fn test_full_lifecycle() {
