@@ -16,3 +16,18 @@ export async function sendOtp(phone: string): Promise<string> {
   });
   return otp;
 }
+
+export async function sendWaitlistSpotOpenedSms(
+  phone: string,
+  circleName: string,
+  joinLink: string
+): Promise<void> {
+  await client.post("/sms/send", {
+    to: phone,
+    from: serverConfig.termii.senderId,
+    sms: `A spot opened in "${circleName}"! Join now: ${joinLink}`,
+    type: "plain",
+    channel: "generic",
+    api_key: serverConfig.termii.apiKey,
+  });
+}

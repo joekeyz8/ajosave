@@ -2,6 +2,7 @@ import { contract, Keypair, Networks } from "@stellar/stellar-sdk";
 import { serverConfig } from "@/server/config";
 import { wrapWithFeeBump } from "@/lib/stellar";
 import { safeFetch } from "@/lib/ssrf";
+import { assertPayoutAmount } from "@/lib/slippage-guard";
 import { execSync } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
@@ -176,9 +177,16 @@ export async function deployAjoContract(): Promise<string> {
  * The contract handles the token transfer; the backend only triggers it.
  *
  * @param contractId - The deployed Ajo contract address for this circle
+ * @param amounts - Optional expected pot vs. amount the recipient will receive;
+ *   checked by the slippage guard before the transaction is submitted (#462)
  * @returns The Soroban transaction hash
  */
-export async function invokeContractPayout(contractId: string): Promise<string> {
+export async function invokeContractPayout(
+  contractId: string,
+  amounts?: { expected: bigint; actual: bigint }
+): Promise<string> {
+  if (amounts) assertPayoutAmount(amounts.expected, amounts.actual);
+
   const keypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
   const signer = contract.basicNodeSigner(keypair, networkPassphrase);
 

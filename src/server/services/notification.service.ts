@@ -496,13 +496,13 @@ export async function notifyInviteRedeemed(
  */
 export async function notifyWaitlistSpotOpened(
   userId: string,
-  circleName: string
+  circleName: string,
+  joinLink: string
 ): Promise<void> {
-  if (!(await canSendSms(userId))) return;
-  const phone = await getUserPhone(userId);
-  if (!phone) return;
+  const user = await getUserDetails(userId);
+  if (!user?.smsNotificationsEnabled || !user.phone) return;
   try {
-    await sendWaitlistSpotOpenedSms(phone, circleName);
+    await sendWaitlistSpotOpenedSms(user.phone, circleName, joinLink);
   } catch (error) {
     console.error(`Failed to send waitlist notification to ${userId}:`, error);
   }

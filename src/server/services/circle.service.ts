@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import type { Circle, Member, CircleStatus, CircleFilters } from "@/types";
 import type { CreateCircleInput } from "@/types/schemas";
 import { transaction, query } from "@/lib/db";
+import { promoteNextWaitlistMember } from "./waitlist.service";
 
 // Exchange rate — replace with live FX feed in production
 const NGN_PER_USDC = 1600;
@@ -481,6 +482,9 @@ export async function leaveCircle(circleId: string, userId: string): Promise<voi
       );
     });
 
+    await promoteNextWaitlistMember(circleId).catch((err) =>
+      console.error(`[waitlist] Auto-promotion failed for circle ${circleId}:`, err)
+    );
     return;
   } catch (err) {
     const domainErrors = [

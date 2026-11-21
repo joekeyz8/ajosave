@@ -9,6 +9,16 @@ import type { Circle, Member } from "@/types";
 import { addPayoutJob } from "@/lib/queue/payoutQueue";
 import { withCronLock, CronLockError } from "./cron-lock";
 
+const HOUR_MS = 60 * 60 * 1000;
+
+/** Expected run interval for each scheduled job, used by /api/cron/health (Issue #435). */
+export const CRON_JOB_INTERVALS_MS: Record<string, number> = {
+  processDueCycles: HOUR_MS,
+  sendPayoutReminders: HOUR_MS,
+  sendContributionReminders: HOUR_MS,
+  processMissedContributions: 24 * HOUR_MS,
+};
+
 /**
  * Send payout reminders 24 hours before scheduled payouts
  * This should be called by a cron job every hour

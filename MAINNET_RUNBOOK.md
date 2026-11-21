@@ -64,3 +64,16 @@ All privileged operations (contract upgrades, treasury withdrawals, parameter ch
 ## Deployment
 
 See `DEPLOYMENT.md` for the deployment sequence.
+
+### WASM hash verification
+
+1. Build locally (`npm run contract:build`) and deploy (`npm run contract:deploy`).
+2. Run `npm run contract:verify`. It fetches the deployed WASM, computes its
+   SHA-256 and compares it to the local build (or `EXPECTED_WASM_HASH`). A
+   mismatch exits non-zero and fails the CI deploy step.
+3. Record the verified hash (also in `deploy-artifacts/contract-<network>.json`)
+   in the table below and in the README "Deployed WASM hash" table.
+
+| Date | Network | Contract ID | WASM SHA-256 |
+| ---- | ------- | ----------- | ------------ |
+| _pending_ | mainnet | _pending_ | _pending_ |

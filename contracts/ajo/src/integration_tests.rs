@@ -933,4 +933,84 @@ let (cycle, max, _, completed, _) = client.get_state();
         f.env.ledger().with_mut(|l| l.timestamp = f.interval + 1);
         f.client.payout();
     }
+
+    // ─── Fee-on-transfer token (issue #462) ───────────────────────────────────
+
+    mod fee_token {
+        use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+
+        #[contracttype]
+        pub enum Key {
+            Admin,
+            FeePayer,
+            Balance(Address),
+        }
+
+        /// Mock token that skims 1% on transfers sent by `fee_payer`.
+        #[contract]
+        pub struct FeeToken;
+
+        #[contractimpl]
+        impl FeeToken {
+            pub fn init(env: Env, admin: Address, fee_payer: Address) {
+                env.storage().instance().set(&Key::Admin, &admin);
+                env.storage().instance().set(&Key::FeePayer, &fee_payer);
+            }
+            pub fn admin(env: Env) -> Address {
+                env.storage().instance().get(&Key::Admin).unwrap()
+            }
+            pub fn mint(env: Env, to: Address, amount: i128) {
+                let bal = Self::balance(env.clone(), to.clone());
+                env.storage().instance().set(&Key::Balance(to), &(bal + amount));
+            }
+            pub fn balance(env: Env, id: Address) -> i128 {
+                env.storage().instance().get(&Key::Balance(id)).unwrap_or(0)
+            }
+            pub fn transfer(env: Env, from: Address, to: Address, amount: i128) {
+                from.require_auth();
+                let fee_payer: Address = env.storage().instance().get(&Key::FeePayer).unwrap();
+                let fee = if from == fee_payer { amount / 100 } else { 0 };
+                let from_bal = Self::balance(env.clone(), from.clone());
+                assert!(from_bal >= amount, "insufficient balance");
+                env.storage().instance().set(&Key::Balance(from), &(from_bal - amount));
+                let to_bal = Self::balance(env.clone(), to.clone());
+                env.storage().instance().set(&Key::Balance(to), &(to_bal + amount - fee));
+            }
+        }
+    }
+
+    #[test]
+    fn test_payout_reverts_on_fee_on_transfer_token() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let contract_id = env.register_contract(None, AjoContract);
+        let client = AjoContractClient::new(&env, &contract_id);
+
+        let token_id = env.register_contract(None, fee_token::FeeToken);
+        let token = fee_token::FeeTokenClient::new(&env, &token_id);
+        token.init(&admin, &contract_id);
+
+        let contribution: i128 = 100_000_000;
+        let max_members: u32 = 2;
+        let interval: u64 = 86_400;
+        client.initialize(&admin, &token_id, &admin, &contribution, &max_members, &interval);
+
+        let mut members = Vec::new(&env);
+        for _ in 0..max_members {
+            let m = Address::generate(&env);
+            token.mint(&m, &contribution);
+            client.join(&m);
+            members.push_back(m);
+        }
+
+        env.ledger().with_mut(|l| l.timestamp = interval + 1);
+        let result = client.try_payout();
+        assert_eq!(result, Err(Ok(crate::Error::PayoutAmountMismatch)));
+
+        // State rolled back: recipient received nothing, contract still holds the pot
+        assert_eq!(token.balance(&members.get(0).unwrap()), 0);
+        assert_eq!(token.balance(&contract_id), contribution * max_members as i128);
+    }
 }

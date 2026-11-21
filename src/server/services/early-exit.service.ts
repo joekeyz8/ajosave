@@ -2,6 +2,7 @@ import { query, transaction } from "@/lib/db";
 import { randomUUID } from "crypto";
 import { sendUsdcPayment } from "@/lib/stellar";
 import type { EarlyExitRequest } from "@/types";
+import { promoteNextWaitlistMember } from "./waitlist.service";
 
 /** Default penalty: 10% of total confirmed contributions */
 const DEFAULT_PENALTY_PERCENT = 10;
@@ -93,6 +94,10 @@ export async function approveEarlyExit(exitRequestId: string): Promise<EarlyExit
       await q(`UPDATE members SET position = $1 WHERE id = $2`, [i + 1, remaining[i].id]);
     }
   });
+
+  await promoteNextWaitlistMember(req.circleId).catch((err) =>
+    console.error(`[waitlist] Auto-promotion failed for circle ${req.circleId}:`, err)
+  );
 
   const { rows } = await query<EarlyExitRequest>(
     `SELECT ${EXIT_SELECT} FROM early_exit_requests WHERE id = $1`,

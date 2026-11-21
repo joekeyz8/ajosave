@@ -209,6 +209,26 @@ The NGN leg (Paystack checkout, rate lock, webhook verification) is
 specified in [ngn-to-usdc-flow.md](ngn-to-usdc-flow.md); this diagram shows
 where the Stellar legs attach to it.
 
+## Verifying the deployed WASM hash
+
+The deployed contract's WASM hash is published in the README and
+`MAINNET_RUNBOOK.md` after each deployment. Any member can verify it
+independently:
+
+```bash
+# Fetch the on-chain WASM and hash it
+stellar contract fetch --id <CONTRACT_ID> --network mainnet --out-file ajo.wasm
+sha256sum ajo.wasm
+
+# Or rebuild from source at the release tag and compare
+npm run contract:build
+sha256sum contracts/target/wasm32-unknown-unknown/release/stellar_ajo.wasm
+```
+
+Both hashes must equal the published value. The checksums are also attached
+to each GitHub Release (`SHA256SUMS.txt`). `npm run contract:verify` performs
+the same comparison and fails CI on mismatch.
+
 ## Troubleshooting Horizon errors
 
 | Symptom | Typical cause | Resolution |

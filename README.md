@@ -107,6 +107,16 @@ The Ajo contract (`contracts/ajo/`) handles the full circle lifecycle:
 | `get_state`   | Read current cycle, next payout time, completion  |
 | `get_members` | List all member addresses                         |
 
+### Deployed WASM hash
+
+Published after each deployment so anyone can verify the on-chain code
+(see [docs/STELLAR_INTEGRATION.md](docs/STELLAR_INTEGRATION.md#verifying-the-deployed-wasm-hash)).
+
+| Network | Contract ID | WASM SHA-256 |
+| ------- | ----------- | ------------ |
+| testnet | _pending_   | _pending_    |
+| mainnet | _pending_   | _pending_    |
+
 ---
 
 ## Getting Started
