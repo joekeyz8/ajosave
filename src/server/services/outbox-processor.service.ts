@@ -29,6 +29,8 @@ import {
 import { getRedis } from "@/lib/redis";
 import { notifyPayoutProcessed, notifyPayoutReminder, notifyContributionReminder, notifyMissedContribution } from "@/server/services/notification.service";
 import { mintCertificate } from "@/server/services/certificate.service";
+import { submitUsdcPayment } from "@/lib/stellar";
+import { submitContractPayout } from "@/lib/soroban";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -129,6 +131,20 @@ async function dispatchEvent(event: OutboxEvent): Promise<void> {
       if (!result.ok) {
         throw new Error(`certificate mint failed for circle ${circleId}: ${result.error}`);
       }
+      break;
+    }
+
+    // ── Operations deferred while a Stellar/Soroban circuit was OPEN ───────
+    // If the circuit is still open these throw and are retried with backoff.
+    case "stellar.payment.deferred": {
+      const { destination, amount } = payload as { destination: string; amount: string };
+      await submitUsdcPayment(destination, amount);
+      break;
+    }
+
+    case "soroban.payout.deferred": {
+      const { contractId } = payload as { contractId: string };
+      await submitContractPayout(contractId);
       break;
     }
 

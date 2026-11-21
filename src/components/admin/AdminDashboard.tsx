@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import type { AdminCircleRow, AdminPayoutRow } from "@/server/services/admin.service";
 import type { Dispute } from "@/types";
+import type { SupportTicketSlaRow } from "@/server/services/support.service";
 import { DisputeList } from "./DisputeList";
 import { ConnectionStatus } from "@/components/ui/ConnectionStatus";
 import { usePolling } from "@/hooks/usePolling";
@@ -12,7 +13,7 @@ const LazyCirclesTable = lazy(() => import("./CirclesTable").then((mod) => ({ de
 const LazyPayoutsTable = lazy(() => import("./PayoutsTable").then((mod) => ({ default: mod.PayoutsTable })));
 const LazyAnalyticsDashboard = lazy(() => import("./AnalyticsDashboard").then((mod) => ({ default: mod.AnalyticsDashboard })));
 
-type Tab = "circles" | "payouts" | "disputes" | "users" | "analytics";
+type Tab = "circles" | "payouts" | "disputes" | "support" | "users" | "analytics";
 
 interface PlatformStats {
   totalCircles: number;
@@ -38,6 +39,7 @@ export function AdminDashboard() {
   const [payouts, setPayouts] = useState<AdminPayoutRow[]>([]);
   const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [tickets, setTickets] = useState<SupportTicketSlaRow[]>([]);
   const [userSearch, setUserSearch] = useState("");
   const [stats, setStats] = useState<PlatformStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,6 +67,13 @@ export function AdminDashboard() {
     const json = await res.json();
     if (!json.success) throw new Error(json.error);
     return json.data as Dispute[];
+  }, []);
+
+  const fetchTickets = useCallback(async () => {
+    const res = await fetch("/api/v1/admin/support/sla");
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error);
+    return json.data as SupportTicketSlaRow[];
   }, []);
 
   const fetchStats = useCallback(async () => {
@@ -134,6 +143,19 @@ export function AdminDashboard() {
     onError: (err) => { setError(err.message); setLoading(false); },
   });
 
+  // Polling for support tickets (SLA status)
+  const { isConnected: supportConnected, error: supportError } = usePolling({
+    fetchFn: fetchTickets,
+    interval: 30000,
+    enabled: tab === "support",
+    onSuccess: (data) => {
+      setTickets(data);
+      setLastUpdate(new Date());
+      setLoading(false);
+    },
+    onError: (err) => { setError(err.message); setLoading(false); },
+  });
+
   // Load users when tab switches to users
   useEffect(() => {
     if (tab !== "users") return;
@@ -152,12 +174,14 @@ export function AdminDashboard() {
   const isConnected =
     tab === "circles" ? circlesConnected :
     tab === "payouts" ? payoutsConnected :
-    tab === "disputes" ? disputesConnected : true;
+    tab === "disputes" ? disputesConnected :
+    tab === "support" ? supportConnected : true;
 
   const currentError =
     tab === "circles" ? circlesError :
     tab === "payouts" ? payoutsError :
-    tab === "disputes" ? disputesError : null;
+    tab === "disputes" ? disputesError :
+    tab === "support" ? supportError : null;
 
   useEffect(() => {
     if (currentError) {
@@ -189,7 +213,7 @@ export function AdminDashboard() {
 
       <div className={styles.topBar}>
         <div className={styles.tabs} role="tablist" aria-label="Admin sections">
-          {(["circles", "payouts", "disputes", "users", "analytics"] as Tab[]).map((t) => (
+          {(["circles", "payouts", "disputes", "support", "users", "analytics"] as Tab[]).map((t) => (
             <button
               key={t}
               className={styles.tab}
@@ -200,6 +224,7 @@ export function AdminDashboard() {
               {t === "circles" ? `Circles (${circles.length})` :
                t === "payouts" ? `Payouts (${payouts.length})` :
                t === "disputes" ? `Disputes (${disputes.length})` :
+               t === "support" ? `Support (${tickets.filter((x) => x.slaStatus === "breached").length} breached)` :
                t === "users" ? "Users" :
                "Analytics"}
             </button>
@@ -237,6 +262,36 @@ export function AdminDashboard() {
           </Suspense>
         ) : tab === "disputes" ? (
           <DisputeList disputes={disputes} />
+        ) : tab === "support" ? (
+          <div role="tabpanel" className={styles.tableContainer}>
+            <table className={styles.table}>
+              <thead>
+                <tr>
+                  <th>Priority</th>
+                  <th>Subject</th>
+                  <th>Status</th>
+                  <th>Assigned to</th>
+                  <th>SLA due</th>
+                  <th>SLA</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tickets.map((t) => (
+                  <tr key={t.id}>
+                    <td>{t.priority}</td>
+                    <td>{t.subject}</td>
+                    <td>{t.status}</td>
+                    <td>{t.assignedTo ?? "Unassigned"}</td>
+                    <td>{t.slaDueAt ? new Date(t.slaDueAt).toLocaleString() : "—"}</td>
+                    <td>{t.slaStatus.replace("_", " ")}</td>
+                  </tr>
+                ))}
+                {tickets.length === 0 && (
+                  <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--color-text-secondary)" }}>No support tickets.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <div role="tabpanel">
             <div style={{ marginBottom: "var(--space-4)" }}>

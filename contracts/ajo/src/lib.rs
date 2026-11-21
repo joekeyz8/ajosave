@@ -17,8 +17,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracterror, contracttype, token, vec, Address, BytesN, Env, Symbol,
-    Vec,
+    contract, contractimpl, contracterror, contracttype, token, vec, Address, BytesN, Env,
+    IntoVal, Symbol, Vec,
 };
 
 // ─── Schema version ───────────────────────────────────────────────────────────
@@ -122,6 +122,10 @@ pub enum DataKey {
 
     // ─── Packed per-member state (storage v2, issue #254) ────────────────────────
     MemberStats(Address),            // persistent: all per-member counters in one entry
+
+    // ─── On-chain completion certificates (issue #453) - instance storage ─────────
+    CertificateContract,             // certificate contract address
+    CircleId,                        // BytesN<32> circle id used in certificate keys
 }
 
 /// Packed per-member persistent state (storage v2, issue #254).
@@ -518,9 +522,20 @@ impl AjoContract {
             (recipient.clone(), pot, current_cycle)
         );
         if current_cycle >= max_members {
+            Self::mint_certificates(&env, &members, max_members, pot);
             env.events().publish((Symbol::new(&env, "circle_completed"),), ());
         }
         Ok(())
+    }
+
+    /// Configure the certificate contract and circle id used to mint soul-bound
+    /// completion certificates for every member when the circle completes. Admin-only.
+    /// This contract must also be registered via `add_minter` on the certificate contract.
+    pub fn set_certificate_config(env: Env, certificate_contract: Address, circle_id: BytesN<32>) {
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::CertificateContract, &certificate_contract);
+        env.storage().instance().set(&DataKey::CircleId, &circle_id);
     }
 
     /// Internal: Calculate and update reputation score for a member
@@ -948,6 +963,37 @@ impl AjoContract {
             updated.suspended = true;
             Self::store_member_stats(env, member, &updated);
             env.events().publish((Symbol::new(env, "member_suspended"),), (member.clone(), missed));
+        }
+    }
+
+    /// Mint a soul-bound certificate for each member via the certificate contract.
+    /// No-op when no certificate contract is configured.
+    fn mint_certificates(env: &Env, members: &Vec<Address>, cycles_completed: u32, payout_amount: i128) {
+        let cert: Option<Address> = env.storage().instance().get(&DataKey::CertificateContract);
+        let circle_id: Option<BytesN<32>> = env.storage().instance().get(&DataKey::CircleId);
+        let (cert, circle_id) = match (cert, circle_id) {
+            (Some(c), Some(id)) => (c, id),
+            _ => return,
+        };
+        let contribution: i128 = env.storage().instance().get(&DataKey::ContributionAmount).expect("not initialized");
+        let total_saved = contribution
+            .checked_mul(cycles_completed as i128)
+            .expect("total overflow");
+        let minter = env.current_contract_address();
+        for member in members.iter() {
+            env.invoke_contract::<()>(
+                &cert,
+                &Symbol::new(env, "mint_from_circle"),
+                vec![
+                    env,
+                    minter.into_val(env),
+                    member.into_val(env),
+                    circle_id.into_val(env),
+                    cycles_completed.into_val(env),
+                    total_saved.into_val(env),
+                    payout_amount.into_val(env),
+                ],
+            );
         }
     }
 

@@ -95,9 +95,7 @@ export async function mintCertificate(params: {
     ...signer,
   });
 
-  // circle_id on-chain is BytesN<32> — pad/hash the UUID to 32 bytes
-  const circleIdBytes = Buffer.alloc(32);
-  Buffer.from(params.circleId.replace(/-/g, ""), "hex").copy(circleIdBytes);
+  const circleIdBytes = toCircleIdBytes(params.circleId);
 
   // total_saved_usdc in stroops (multiply by 10^7)
   const totalSavedStroops = BigInt(
@@ -153,6 +151,39 @@ export async function mintCertificate(params: {
   return mintOk ? { ok: true, txHash: txHash || null } : { ok: false, txHash: null, error: mintError };
 }
 
+/** circle_id on-chain is BytesN<32> — the UUID's 16 bytes, zero-padded to 32. */
+function toCircleIdBytes(circleId: string): Buffer {
+  const bytes = Buffer.alloc(32);
+  Buffer.from(circleId.replace(/-/g, ""), "hex").copy(bytes);
+  return bytes;
+}
+
+/**
+ * Check whether the certificate contract already holds a certificate for
+ * (member, circle) — e.g. minted by the Ajo contract on circle completion.
+ * Returns false when no contract is configured or the RPC read fails.
+ */
+export async function hasOnChainCertificate(
+  memberStellarKey: string,
+  circleId: string
+): Promise<boolean> {
+  const contractId = serverConfig.stellar.certificateContractId;
+  if (!contractId) return false;
+  try {
+    const client = await contract.Client.from({
+      contractId,
+      networkPassphrase,
+      rpcUrl: serverConfig.stellar.sorobanRpcUrl,
+    });
+    // @ts-expect-error — method generated from contract ABI at runtime
+    const tx = await client.has({ member: memberStellarKey, circle_id: toCircleIdBytes(circleId) });
+    return tx.result === true;
+  } catch (err) {
+    logger.warn({ err, circleId, memberStellarKey }, "on-chain certificate check failed");
+    return false;
+  }
+}
+
 /**
  * Enqueue certificate mints for every member of a circle that just completed.
  *
@@ -194,6 +225,7 @@ export async function queueCertificatesForCircle(circleId: string): Promise<void
 
     let queued = 0;
     let skippedNoKey = 0;
+    let verifiedOnChain = 0;
     for (const row of memberRes.rows) {
       const key = row.stellar_public_key;
       if (!key) {
@@ -201,6 +233,21 @@ export async function queueCertificatesForCircle(circleId: string): Promise<void
         continue;
       }
       if (alreadyIssued.has(key)) continue;
+
+      // Verify the on-chain certificate first: when the Ajo contract already
+      // minted it on completion, issue the off-chain record directly.
+      if (await hasOnChainCertificate(key, circleId)) {
+        await query(
+          `INSERT INTO certificates
+             (circle_id, circle_name, member_stellar_key, token_id,
+              cycles_completed, total_saved_usdc, tx_hash, issued_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NULL, NOW())
+           ON CONFLICT (circle_id, member_stellar_key) DO NOTHING`,
+          [circleId, circleName, key, deriveCertificateTokenId(key, circleId), cyclesCompleted, totalSavedUsdc]
+        );
+        verifiedOnChain += 1;
+        continue;
+      }
 
       await enqueueEvent("circle", circleId, "certificate.mint", {
         circleId,
@@ -213,7 +260,7 @@ export async function queueCertificatesForCircle(circleId: string): Promise<void
     }
 
     logger.info(
-      { circleId, queued, skippedNoKey, alreadyIssued: alreadyIssued.size },
+      { circleId, queued, verifiedOnChain, skippedNoKey, alreadyIssued: alreadyIssued.size },
       "queued certificate mints for completed circle"
     );
   } catch (err) {

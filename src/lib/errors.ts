@@ -106,6 +106,13 @@ export function internalError(message = "Internal server error", details?: unkno
   return new AppError(message, "INTERNAL_ERROR", 500, details);
 }
 
+/**
+ * 503 Service Unavailable — a dependency (e.g. the database) timed out or is unavailable.
+ */
+export function serviceUnavailable(message = "Service temporarily unavailable", details?: unknown): AppError {
+  return new AppError(message, "SERVICE_UNAVAILABLE", 503, details);
+}
+
 // ─── Type guard ───────────────────────────────────────────────────────────────
 
 /** Narrows an unknown thrown value to AppError. */

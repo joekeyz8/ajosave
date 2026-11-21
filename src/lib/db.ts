@@ -16,10 +16,15 @@
  * - Pool automatically manages connection lifecycle
  * - Idle connections are closed after 30s
  * - Connection timeout is 5s
+ * - DB_STATEMENT_TIMEOUT_MS: statement_timeout for API connections (default: 10000)
+ * - DB_BACKGROUND_STATEMENT_TIMEOUT_MS: statement_timeout for the background
+ *   job pool used by `backgroundQuery()` (default: 60000)
+ * - Statement timeouts surface as a 503 AppError (SERVICE_UNAVAILABLE)
  */
 import { Pool, type QueryResult, type QueryResultRow } from "pg";
 import { recordQuery } from "./query-metrics";
 import { serverConfig } from "@/server/config";
+import { serviceUnavailable } from "./errors";
 
 const _DB_POOL_SIZE = parseInt(process.env.DB_POOL_SIZE ?? "10", 10);
 const _DB_CONNECTION_TIMEOUT_MS = parseInt(process.env.DB_CONNECTION_TIMEOUT_MS ?? "5000", 10);
@@ -27,9 +32,64 @@ const _DB_IDLE_TIMEOUT_MS = parseInt(process.env.DB_IDLE_TIMEOUT_MS ?? "30000", 
 const DB_MAX_RETRIES = parseInt(process.env.DB_MAX_RETRIES ?? "3", 10);
 const DB_RETRY_DELAY_MS = parseInt(process.env.DB_RETRY_DELAY_MS ?? "500", 10);
 
+const DB_STATEMENT_TIMEOUT_MS = parseInt(process.env.DB_STATEMENT_TIMEOUT_MS ?? "10000", 10);
+const DB_BACKGROUND_STATEMENT_TIMEOUT_MS = parseInt(
+  process.env.DB_BACKGROUND_STATEMENT_TIMEOUT_MS ?? "60000",
+  10
+);
+
+/** PostgreSQL SQLSTATE for "canceling statement due to statement timeout". */
+const QUERY_CANCELED = "57014";
+
+function isStatementTimeout(err: unknown): boolean {
+  return (err as { code?: string } | null)?.code === QUERY_CANCELED;
+}
+
+/** Map statement timeouts to a 503 so clients get a retryable error. */
+function toTimeoutError(err: unknown): unknown {
+  return isStatementTimeout(err) ? serviceUnavailable("Database query timed out") : err;
+}
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 let pool: Pool | null = null;
+let backgroundPool: Pool | null = null;
+
+/**
+ * Separate pool for long-running background jobs (analytics, exports) with a
+ * longer statement_timeout so they don't starve API connections.
+ */
+function getBackgroundPool(): Pool {
+  if (!backgroundPool) {
+    backgroundPool = new Pool({
+      connectionString: serverConfig.database.url,
+      max: parseInt(process.env.DB_BACKGROUND_POOL_SIZE ?? "3", 10),
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 5_000,
+      statement_timeout: DB_BACKGROUND_STATEMENT_TIMEOUT_MS,
+      ssl: serverConfig.stellar.network === "mainnet" ? { rejectUnauthorized: true } : false,
+    });
+    backgroundPool.on("error", (err) => {
+      console.error("[db] Unexpected background pool error:", err);
+    });
+  }
+  return backgroundPool;
+}
+
+/**
+ * Execute a parameterized query on the background job pool (60 s statement_timeout).
+ * Use for analytics, exports and other long-running jobs — never for API requests.
+ */
+export async function backgroundQuery<T extends QueryResultRow = QueryResultRow>(
+  text: string,
+  params?: unknown[]
+): Promise<QueryResult<T>> {
+  try {
+    return await getBackgroundPool().query<T>(text, params);
+  } catch (err) {
+    throw toTimeoutError(err);
+  }
+}
 
 function getPool(): Pool {
   if (!pool) {
@@ -42,6 +102,7 @@ function getPool(): Pool {
       min: minPoolSize,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 5_000,
+      statement_timeout: DB_STATEMENT_TIMEOUT_MS,
       // Validate connections before use to detect stale connections
       allowExitOnIdle: false,
       ssl: serverConfig.stellar.network === "mainnet" ? { rejectUnauthorized: true } : false,
@@ -76,6 +137,10 @@ function getPool(): Pool {
  * Call during server shutdown.
  */
 export async function closePool(): Promise<void> {
+  if (backgroundPool) {
+    await backgroundPool.end().catch((err) => console.error("[db] Error closing background pool:", err));
+    backgroundPool = null;
+  }
   if (pool) {
     console.log("[db] Closing connection pool...");
     try {
@@ -133,7 +198,7 @@ export async function query<T extends QueryResultRow = QueryResultRow>(
         (err.message.includes("Connection terminated") ||
           err.message.includes("connection timeout") ||
           err.message.includes("ECONNRESET"));
-      if (!isTransient || attempt === DB_MAX_RETRIES) throw err;
+      if (!isTransient || attempt === DB_MAX_RETRIES) throw toTimeoutError(err);
       console.warn(`[db] query attempt ${attempt} failed, retrying in ${DB_RETRY_DELAY_MS}ms…`);
       await sleep(DB_RETRY_DELAY_MS * attempt);
     }
@@ -158,7 +223,7 @@ export async function transaction<T>(
     return result;
   } catch (err) {
     await client.query("ROLLBACK");
-    throw err;
+    throw toTimeoutError(err);
   } finally {
     client.release();
   }

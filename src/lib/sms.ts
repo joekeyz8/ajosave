@@ -16,3 +16,15 @@ export async function sendOtp(phone: string): Promise<string> {
   });
   return otp;
 }
+
+/** Send a plain-text SMS via Termii. */
+export async function sendSms(phone: string, message: string): Promise<void> {
+  await client.post("/sms/send", {
+    to: phone,
+    from: serverConfig.termii.senderId,
+    sms: message,
+    type: "plain",
+    channel: "generic",
+    api_key: serverConfig.termii.apiKey,
+  });
+}
