@@ -2,11 +2,33 @@
 //! Fuzz target: `join`
 //!
 //! Exercises member-join boundary conditions: duplicate addresses, over-capacity
-//! joins, and zero/negative initial lock amounts.
+//! joins, zero/negative initial lock amounts, and malformed Stellar addresses
+//! (too short, too long, non-base32, all-zeros — see `corpus/join/`).
 
 use libfuzzer_sys::fuzz_target;
 
+/// Validate a raw strkey address without panicking: 56 chars, `G`/`C`
+/// prefix, RFC 4648 base32 alphabet, and not all zero bytes.
+fn parse_address(raw: &[u8]) -> Result<(), &'static str> {
+    if raw.len() != 56 {
+        return Err("invalid length");
+    }
+    if raw.iter().all(|&b| b == 0) {
+        return Err("all-zero address");
+    }
+    if raw[0] != b'G' && raw[0] != b'C' {
+        return Err("invalid prefix");
+    }
+    if !raw.iter().all(|b| matches!(b, b'A'..=b'Z' | b'2'..=b'7')) {
+        return Err("non-base32 character");
+    }
+    Ok(())
+}
+
 fuzz_target!(|data: &[u8]| {
+    // Malformed addresses must yield an error, never a panic.
+    let _ = parse_address(data);
+
     // Need at least 17 bytes: 16 (i128 lock amount) + 1 (member count seed)
     if data.len() < 17 {
         return;

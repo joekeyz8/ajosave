@@ -623,6 +623,17 @@ let (cycle, max, _, completed, _) = client.get_state();
         assert_eq!(completed_before, completed_after, "completed flag should be unchanged after upgrade");
     }
 
+    /// propose_upgrade (#466): rejects a WASM hash that was never uploaded,
+    /// so no timelock is started.
+    #[test]
+    fn test_propose_upgrade_rejects_missing_wasm() {
+        use soroban_sdk::BytesN;
+
+        let f = setup_fixture(2);
+        let missing_hash = BytesN::from_array(&f.env, &[9u8; 32]);
+        assert!(f.client.try_propose_upgrade(&missing_hash).is_err());
+    }
+
     /// Multi-member scenario: 5-member circle completes full rotation
     #[test]
     fn test_multi_member_five_members() {

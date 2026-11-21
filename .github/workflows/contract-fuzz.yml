@@ -88,7 +88,20 @@ jobs:
             -- -max_total_time=${FUZZ_DURATION} \
                -print_final_stats=1 \
                -artifact_prefix=/tmp/fuzz-${{ matrix.target }}- \
-            || true
+            2>&1 | tee /tmp/fuzz-${{ matrix.target }}.log || true
+
+      - name: Report fuzz coverage — ${{ matrix.target }}
+        if: always()
+        run: |
+          LOG=/tmp/fuzz-${{ matrix.target }}.log
+          TOTAL=$(grep -oE 'Loaded [0-9]+ modules +\(([0-9]+) inline 8-bit counters' "$LOG" | grep -oE '\(([0-9]+)' | tr -d '(' | head -1)
+          COV=$(grep -oE 'cov: [0-9]+' "$LOG" | tail -1 | grep -oE '[0-9]+')
+          if [ -n "$TOTAL" ] && [ -n "$COV" ] && [ "$TOTAL" -gt 0 ]; then
+            PCT=$(awk "BEGIN { printf \"%.2f\", ($COV / $TOTAL) * 100 }")
+            echo "${{ matrix.target }} coverage: ${PCT}% (${COV}/${TOTAL} edges)" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "${{ matrix.target }} coverage: unavailable" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload corpus & crash artefacts
         if: always()

@@ -70,6 +70,9 @@ pub enum Error {
     InvalidTokenIssuer = 1,
     /// State-changing circle operations are disabled while the admin pause is active.
     CirclePaused = 2,
+    /// `propose_upgrade` was called with a WASM hash that has not been
+    /// uploaded to the ledger yet.
+    WasmNotFound = 3,
 }
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
@@ -154,6 +157,17 @@ impl MemberStats {
             suspended: false,
         }
     }
+}
+
+/// Typed per-member view returned by `get_member_state` (issue #465).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemberState {
+    pub joined: bool,
+    pub contributions_paid: u32,
+    pub payout_received: bool,
+    pub suspended: bool,
+    pub missed_cycles: u32,
 }
 
 // ─── Contract ─────────────────────────────────────────────────────────────────
@@ -700,9 +714,19 @@ impl AjoContract {
     /// Starts the upgrade-governance timelock: the matching `upgrade` call
     /// cannot execute until `UPGRADE_TIMELOCK_SECS` has elapsed. Proposing a
     /// new hash replaces any previous pending proposal.
-    pub fn propose_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+    ///
+    /// The WASM must already be uploaded: its code entry is touched here, so
+    /// the call fails (`WasmNotFound`) before the timelock starts if it is not.
+    pub fn propose_upgrade(env: Env, new_wasm_hash: BytesN<32>) -> Result<(), Error> {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
+
+        // Traps if no code entry exists for this hash (WASM not uploaded).
+        env.deployer().extend_ttl_for_code(
+            new_wasm_hash.clone(),
+            PERSISTENT_LIFETIME_THRESHOLD,
+            PERSISTENT_BUMP_AMOUNT,
+        );
 
         let effective_at = env.ledger().timestamp() + UPGRADE_TIMELOCK_SECS;
         env.storage().instance().set(&DataKey::PendingUpgradeHash, &new_wasm_hash);
@@ -712,6 +736,7 @@ impl AjoContract {
             (Symbol::new(&env, "upgrade_proposed"),),
             (new_wasm_hash, effective_at),
         );
+        Ok(())
     }
 
     /// Cancel a pending upgrade proposal. Admin-only. No-op if none pending.
@@ -787,6 +812,33 @@ impl AjoContract {
         let completed: bool = env.storage().instance().get(&DataKey::Completed).unwrap_or(false);
         let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
         (current_cycle, max_members, next_payout_time, completed, paused)
+    }
+
+    /// Typed member view (issue #465). Returns `None` for non-members and
+    /// bumps the member's persistent storage TTL.
+    pub fn get_member_state(env: Env, member: Address) -> Option<MemberState> {
+        let members: Vec<Address> = env.storage().instance().get(&DataKey::Members).unwrap_or(vec![&env]);
+        let idx = members.first_index_of(&member)?;
+
+        let key = DataKey::MemberStats(member.clone());
+        if env.storage().persistent().has(&key) {
+            Self::extend_persistent_ttl(&env, &key);
+        }
+        let stats = Self::member_stats(&env, &member);
+
+        let current_cycle: u32 = env.storage().instance().get(&DataKey::CurrentCycle).unwrap_or(0);
+        let completed: bool = env.storage().instance().get(&DataKey::Completed).unwrap_or(false);
+        let order: Vec<u32> = env.storage().instance().get(&DataKey::PayoutOrder).unwrap_or(vec![&env]);
+        let position = if order.is_empty() { Some(idx) } else { order.first_index_of(idx) };
+        let payout_received = completed || position.map_or(false, |p| p + 1 < current_cycle);
+
+        Some(MemberState {
+            joined: true,
+            contributions_paid: stats.total_contributions,
+            payout_received,
+            suspended: stats.suspended,
+            missed_cycles: stats.missed_contributions,
+        })
     }
 
     pub fn get_members(env: Env) -> Vec<Address> {

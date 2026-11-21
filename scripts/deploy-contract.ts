@@ -23,9 +23,36 @@ if (!fs.existsSync(wasmPath)) {
 
 console.log(`Deploying Ajo contract to ${network}…`);
 
+// Upload the WASM first so its hash exists on-chain before any
+// `propose_upgrade` call (required by the contract, issue #466).
+const wasmHash = execSync(
+  `stellar contract upload \
+    --wasm ${wasmPath} \
+    --source ${process.env.STELLAR_SERVER_SECRET_KEY} \
+    --rpc-url ${rpcUrl} \
+    --network-passphrase "${passphrase}"`,
+  { encoding: "utf-8" }
+).trim();
+console.log(`✅ WASM uploaded: ${wasmHash}`);
+
+const upgradeContractId = process.env.STELLAR_AJO_CONTRACT_ID;
+if (process.env.AJO_PROPOSE_UPGRADE === "true" && upgradeContractId) {
+  execSync(
+    `stellar contract invoke \
+      --id ${upgradeContractId} \
+      --source ${process.env.STELLAR_SERVER_SECRET_KEY} \
+      --rpc-url ${rpcUrl} \
+      --network-passphrase "${passphrase}" \
+      -- propose_upgrade --new_wasm_hash ${wasmHash}`,
+    { stdio: "inherit" }
+  );
+  console.log(`✅ Upgrade proposed for ${upgradeContractId}`);
+  process.exit(0);
+}
+
 const result = execSync(
   `stellar contract deploy \
-    --wasm ${wasmPath} \
+    --wasm-hash ${wasmHash} \
     --source ${process.env.STELLAR_SERVER_SECRET_KEY} \
     --rpc-url ${rpcUrl} \
     --network-passphrase "${passphrase}"`,

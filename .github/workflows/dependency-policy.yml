@@ -4,7 +4,8 @@ name: Dependency Security Policy
 # docs/DEPENDENCY_SECURITY_POLICY.md (#107).
 #
 # Runs on every PR and push to main / develop.
-# Blocks merge when high or critical advisories are found.
+# Policy: https://github.com/jones43r/ajosave/blob/main/docs/DEPENDENCY_SECURITY_POLICY.md
+# npm: critical advisories block merge; high advisories open a tracking issue.
 
 on:
   push:
@@ -19,6 +20,7 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write   # post audit summary comment on PRs
+  issues: write          # open tracking issues for high npm advisories
 
 jobs:
   # ── npm audit ──────────────────────────────────────────────────────────────
@@ -61,15 +63,19 @@ jobs:
           const total = Object.values(counts).reduce((a, b) => a + b, 0);
           const high  = (counts.high    ?? 0) + (counts.critical ?? 0);
           console.log(`total=${total}`);
+          const critical = counts.critical ?? 0;
+          const highOnly = counts.high ?? 0;
           console.log(`high_or_critical=${high}`);
           console.log(`summary=${JSON.stringify(counts)}`);
           fs.writeFileSync('npm-audit-summary.txt',
-            `total=${total}\nhigh_or_critical=${high}\nsummary=${JSON.stringify(counts)}`);
+            `total=${total}\nhigh_or_critical=${high}\ncritical=${critical}\nhigh_only=${highOnly}\nsummary=${JSON.stringify(counts)}`);
           EOF
 
           source npm-audit-summary.txt
           echo "total=${total}"                         >> "$GITHUB_OUTPUT"
           echo "high_or_critical=${high_or_critical}"  >> "$GITHUB_OUTPUT"
+          echo "critical=${critical}"                   >> "$GITHUB_OUTPUT"
+          echo "high_only=${high_only}"                 >> "$GITHUB_OUTPUT"
           echo "summary=${summary}"                     >> "$GITHUB_OUTPUT"
 
       - name: Post PR comment with audit results
@@ -85,7 +91,7 @@ jobs:
               ? `### ${icon} npm Audit\n✅ No vulnerabilities found.`
               : `### ${icon} npm Audit\n**${total} total** vulnerabilities — breakdown: \`${summary}\`\n\n` +
                 (high > 0
-                  ? `❌ **${high} high/critical** — this PR is **blocked** until resolved.\n`
+                  ? `❌ **${high} high/critical** — critical findings **block** this PR; high findings open a tracking issue.\n`
                   : '⚠️ No high/critical issues. Please triage moderate/low findings.');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -94,15 +100,34 @@ jobs:
               body,
             });
 
-      - name: Fail on high or critical vulnerabilities
+      - name: Open issue for high vulnerabilities
+        if: steps.parse.outputs.high_only != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const high = '${{ steps.parse.outputs.high_only }}';
+            const title = `[Security] npm audit: ${high} high-severity vulnerabilities`;
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'security,dependencies',
+            });
+            if (open.some((i) => i.title === title)) return;
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner, repo: context.repo.repo, title,
+              body: `npm audit found ${high} high-severity vulnerabilities.\n\n**Run:** ${runUrl}\n\nSee docs/DEPENDENCY_SECURITY_POLICY.md for remediation SLAs.`,
+              labels: ['security', 'dependencies'],
+            });
+
+      - name: Fail on critical vulnerabilities
         run: |
-          HIGH="${{ steps.parse.outputs.high_or_critical }}"
-          if [ "${HIGH}" -gt 0 ]; then
-            echo "::error::npm audit found ${HIGH} high/critical vulnerabilities."
+          CRITICAL="${{ steps.parse.outputs.critical }}"
+          if [ "${CRITICAL}" -gt 0 ]; then
+            echo "::error::npm audit found ${CRITICAL} critical vulnerabilities."
             echo "Resolve them before merging. See docs/DEPENDENCY_SECURITY_POLICY.md"
             exit 1
           fi
-          echo "No high/critical npm vulnerabilities found."
+          echo "No critical npm vulnerabilities found."
 
       - name: Upload npm audit report
         if: always()
