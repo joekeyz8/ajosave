@@ -132,6 +132,32 @@ async function saveCheckpoint(contractId: string, ledger: number): Promise<void>
 
 // ── Event reactions ───────────────────────────────────────────────────────────
 
+/** Contract events with no side effects beyond being marked processed. */
+export const AUDIT_TOPICS = new Set<string>([
+  "initialized",
+  "member_joined",
+  "circle_started",
+  "reputation_updated",
+  "migrated",
+  "upgrade_proposed",
+  "upgrade_cancelled",
+  "upgraded",
+  "paused",
+  "unpaused",
+  "CirclePaused",
+  "CircleUnpaused",
+  "CircleResumed",
+  "PauseSignersUpdated",
+  "GuardianUpdated",
+  "PayoutOrderSet",
+  "admin_proposed",
+  "admin_transferred",
+  "ttl_config_updated",
+  "missed_policy_updated",
+  "member_suspended",
+  "member_reinstated",
+]);
+
 async function reactToEvent(event: ContractEvent): Promise<void> {
   const topic = event.topic?.[0];
   const txHash = event.transactionHash;
@@ -151,7 +177,12 @@ async function reactToEvent(event: ContractEvent): Promise<void> {
       case "circle_completed":
         await onCircleCompleted(val);
         break;
-      // member_joined — stored for audit; no extra action needed
+      default:
+        // Remaining contract events (see contracts/ajo/EVENTS.md) are recorded
+        // for audit only; anything else is an unknown topic worth flagging.
+        if (!AUDIT_TOPICS.has(topic ?? "")) {
+          console.warn(`[event-indexer] Unknown event topic=${topic} tx=${txHash}`);
+        }
     }
     await markProcessed(txHash, topic ?? "unknown");
   } catch (err) {

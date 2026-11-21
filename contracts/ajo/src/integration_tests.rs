@@ -390,7 +390,7 @@ let (cycle, max, _, completed, _) = client.get_state();
     fn test_paused_blocks_contribute() {
         let f = setup_fixture(2);
         for m in f.members.iter() { f.client.join(m); }
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         assert_eq!(
             f.client.try_contribute(&f.members.get(0).unwrap(), &f.contribution),
             Err(Ok(crate::Error::CirclePaused))
@@ -401,7 +401,7 @@ let (cycle, max, _, completed, _) = client.get_state();
     #[test]
     fn test_paused_blocks_join() {
         let f = setup_fixture(2);
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         assert_eq!(
             f.client.try_join(&f.members.get(0).unwrap()),
             Err(Ok(crate::Error::CirclePaused))
@@ -420,7 +420,7 @@ let (cycle, max, _, completed, _) = client.get_state();
         let f = setup_fixture(2);
         for m in f.members.iter() { f.client.join(m); }
         f.env.ledger().with_mut(|l| l.timestamp = f.interval + 1);
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         assert_eq!(f.client.try_payout(), Err(Ok(crate::Error::CirclePaused)));
     }
 
@@ -432,7 +432,7 @@ let (cycle, max, _, completed, _) = client.get_state();
         for m in f.members.iter() { f.client.join(m); }
         f.env.ledger().with_mut(|l| l.timestamp = f.interval + 1);
 
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         f.client.unpause();
 
         f.client.payout(); // must succeed now that the pause has been lifted
@@ -458,7 +458,7 @@ let (cycle, max, _, completed, _) = client.get_state();
         f.client.payout();
 
         let member = f.members.get(0).unwrap();
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         assert_eq!(f.client.try_contribute(&member, &f.contribution), Err(Ok(crate::Error::CirclePaused)));
         f.client.unpause();
         f.client.contribute(&member, &f.contribution);

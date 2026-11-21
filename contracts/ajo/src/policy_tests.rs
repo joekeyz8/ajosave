@@ -176,7 +176,8 @@ fn admin_functions_reject_non_admin() {
     }
 
     denied!(try_set_payout_order, "set_payout_order", (order.clone(),).into_val(&env), &order);
-    denied!(try_pause, "pause", ().into_val(&env));
+    let approvers: Vec<Address> = vec![&env, attacker.clone()];
+    denied!(try_pause, "pause", (approvers.clone(),).into_val(&env), &approvers);
     denied!(try_unpause, "unpause", ().into_val(&env));
     denied!(try_migrate, "migrate", ().into_val(&env));
     denied!(try_upgrade, "upgrade", (hash.clone(),).into_val(&env), &hash);
@@ -192,10 +193,11 @@ fn admin_functions_accept_admin() {
     env.mock_all_auths();
     let (admin, _, client) = setup(&env);
     let id = client.address.clone();
-    let auths = auth_as(&env, &admin, &id, "pause", ().into_val(&env));
-    assert!(client.mock_auths(&auths).try_pause().is_ok());
     let auths = auth_as(&env, &admin, &id, "set_missed_policy", (2u32,).into_val(&env));
     assert!(client.mock_auths(&auths).try_set_missed_policy(&2u32).is_ok());
+    let approvers: Vec<Address> = vec![&env, admin.clone()];
+    let auths = auth_as(&env, &admin, &id, "pause", (approvers.clone(),).into_val(&env));
+    assert!(client.mock_auths(&auths).try_pause(&approvers).is_ok());
 }
 
 #[test]
@@ -310,4 +312,26 @@ fn payout_lock_blocks_concurrent_payout() {
     assert!(client.try_payout().is_err());
     client.set_payout_lock(&false);
     assert!(client.try_payout().is_ok());
+}
+
+// ─── #451 Realistic cycle interval bounds ─────────────────────────────────────
+
+fn try_init_with_interval(interval: u64) -> Result<(), Error> {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let token_id = env.register_stellar_asset_contract(admin.clone());
+    let client = AjoContractClient::new(&env, &env.register_contract(None, AjoContract));
+    client
+        .try_initialize(&admin, &token_id, &admin, &AMOUNT, &2, &interval)
+        .map(|_| ())
+        .map_err(|e| e.expect("expected a contract error"))
+}
+
+#[test]
+fn initialize_cycle_interval_boundaries() {
+    assert_eq!(MIN_REALISTIC_CYCLE_INTERVAL_SECS, 86_400);
+    assert_eq!(try_init_with_interval(86_399), Err(Error::InvalidCycleInterval));
+    assert_eq!(try_init_with_interval(86_400), Ok(()));
+    assert_eq!(try_init_with_interval(86_401), Ok(()));
 }

@@ -26,11 +26,28 @@ function's doc comment here alongside the code change.
 | `reputation_updated` | `(member: Address, reputation: u32)` | internal `update_reputation` |
 | `migrated` | `(from_version: u32, to_version: u32)` | `migrate` |
 | `upgraded` | `(new_wasm_hash: BytesN<32>)` | `upgrade` |
-| `paused` | `()` (no data) | `pause` |
+| `upgrade_proposed` | `(new_wasm_hash: BytesN<32>, effective_at: u64)` | `propose_upgrade` |
+| `upgrade_cancelled` | `()` (no data) | `cancel_upgrade` |
+| `paused` | `()` (no data) | `pause`, `emergency_pause` |
+| `CirclePaused` | `(approvers: Vec<Address>, expires_at: u64)` — `expires_at = 0` for a multi-sig pause, otherwise the guardian pause's auto-expiry | `pause`, `emergency_pause` |
 | `unpaused` | `()` (no data) | `unpause` |
 | `CircleResumed` | `()` (no data) | `unpause` |
+| `CircleUnpaused` | `(admin: Address)` | `unpause` |
+| `PauseSignersUpdated` | `(signers: Vec<Address>, threshold: u32)` | `set_pause_signers` |
+| `GuardianUpdated` | `(guardian: Address)` | `set_guardian` |
+| `PayoutOrderSet` | `(order: Vec<u32>)` | `set_payout_order` |
 | `admin_proposed` | `(admin: Address, new_admin: Address)` | `propose_admin` |
 | `admin_transferred` | `(old_admin: Address, new_admin: Address)` | `accept_admin` |
+| `ttl_config_updated` | `(admin: Address, threshold: u32, extend_to: u32)` | `set_ttl_config` |
+| `missed_policy_updated` | `(admin: Address, max_missed: u32)` | `set_missed_policy` |
+| `member_suspended` | `(member: Address, missed: u32)` | `payout` (missed-contribution policy) |
+| `member_reinstated` | `(member: Address)` | `reinstate_member` |
+
+New topics use `PascalCase`; existing `snake_case` topics are kept unchanged
+so current consumers keep working. Every topic above is in
+`AUDIT_TOPICS`/the dispatch switch in `event-indexer.service.ts`, and
+`hardening_tests.rs::every_entry_point_emits_event` asserts each public entry
+point emits its event.
 
 ## Known compatibility gap (found while adding this reference)
 

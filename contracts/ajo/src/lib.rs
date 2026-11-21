@@ -17,7 +17,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contractimpl, contracterror, contracttype, token, vec, Address, BytesN, Env, Symbol,
+    contract, contractimpl, contracterror, contracttype, panic_with_error, token, vec, Address, BytesN, Env, Symbol,
     Vec,
 };
 
@@ -47,9 +47,16 @@ const DEFAULT_MAX_MISSED: u32 = 1;
 /// to swap the WASM instantly and unilaterally.
 const UPGRADE_TIMELOCK_SECS: u64 = 172_800; // 48 hours
 
+/// How long a guardian `emergency_pause` lasts without multi-sig confirmation
+/// via `pause` before it lapses automatically (issue #452).
+pub const EMERGENCY_PAUSE_TTL_SECS: u64 = 86_400; // 24 hours
+
 // ─── Interval bounds (issue #48) ──────────────────────────────────────────────
-/// Minimum seconds between payouts.
-pub const MIN_CYCLE_INTERVAL_SECS: u64 = 1;
+/// Minimum seconds between payouts (1 day, issue #451). A shorter cycle would
+/// let payouts fire every few seconds and drain the pot faster than members
+/// can react, so `initialize` rejects anything below this with
+/// `Error::InvalidCycleInterval`.
+pub const MIN_REALISTIC_CYCLE_INTERVAL_SECS: u64 = 86_400;
 /// Maximum seconds between payouts (365 days). Bounds `timestamp + interval`
 /// far below `u64::MAX` so payout scheduling can never overflow.
 pub const MAX_CYCLE_INTERVAL_SECS: u64 = 365 * 24 * 60 * 60;
@@ -70,6 +77,11 @@ pub enum Error {
     InvalidTokenIssuer = 1,
     /// State-changing circle operations are disabled while the admin pause is active.
     CirclePaused = 2,
+    /// `cycle_interval_secs` is below `MIN_REALISTIC_CYCLE_INTERVAL_SECS` or
+    /// above `MAX_CYCLE_INTERVAL_SECS`.
+    InvalidCycleInterval = 3,
+    /// `pause` was not approved by enough multi-sig pause signers.
+    InsufficientApprovals = 4,
 }
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
@@ -99,6 +111,14 @@ pub enum DataKey {
     NextPayoutTime,
     Completed,
     Paused,
+    /// Expiry timestamp of an unconfirmed guardian emergency pause (issue #452).
+    PauseExpiresAt,
+    /// M-of-N signers allowed to approve `pause` (defaults to `[admin]`).
+    PauseSigners,
+    /// Number of `PauseSigners` approvals `pause` requires (defaults to 1).
+    PauseThreshold,
+    /// Single key allowed to call `emergency_pause`.
+    Guardian,
     StorageVersion,
     TtlThreshold,
     TtlExtendTo,
@@ -182,7 +202,7 @@ impl AjoContract {
         contribution_amount: i128,
         max_members: u32,
         cycle_interval_secs: u64,
-    ) {
+    ) -> Result<(), Error> {
         Self::extend_instance_ttl(&env);
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
@@ -193,10 +213,10 @@ impl AjoContract {
         if contribution_amount <= 0 {
             panic!("contribution_amount must be positive");
         }
-        if cycle_interval_secs < MIN_CYCLE_INTERVAL_SECS
+        if cycle_interval_secs < MIN_REALISTIC_CYCLE_INTERVAL_SECS
             || cycle_interval_secs > MAX_CYCLE_INTERVAL_SECS
         {
-            panic!("cycle_interval_secs out of range");
+            return Err(Error::InvalidCycleInterval);
         }
         // The full pot must be representable.
         if contribution_amount.checked_mul(max_members as i128).is_none() {
@@ -242,6 +262,7 @@ impl AjoContract {
             (Symbol::new(&env, "initialized"),),
             (admin, max_members, contribution_amount),
         );
+        Ok(())
     }
 
     // ── Member operations ─────────────────────────────────────────────────────
@@ -249,7 +270,7 @@ impl AjoContract {
     /// Join the circle. Transfers the first contribution into the contract.
     pub fn join(env: Env, member: Address) -> Result<(), Error> {
         Self::extend_instance_ttl(&env);
-        if env.storage().instance().get(&DataKey::Paused).unwrap_or(false) {
+        if Self::is_paused(&env) {
             return Err(Error::CirclePaused);
         }
         member.require_auth();
@@ -303,7 +324,7 @@ impl AjoContract {
         Self::extend_instance_ttl(&env);
 
         // Respect emergency pause
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        let paused: bool = Self::is_paused(&env);
         if paused {
             return Err(Error::CirclePaused);
         }
@@ -380,6 +401,7 @@ impl AjoContract {
 
     /// Set payout order. Admin-only.
     pub fn set_payout_order(env: Env, order: Vec<u32>) {
+        Self::require_not_paused(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -409,6 +431,7 @@ impl AjoContract {
         }
 
         env.storage().instance().set(&DataKey::PayoutOrder, &order);
+        env.events().publish((Symbol::new(&env, "PayoutOrderSet"),), (order,));
     }
 
     /// Trigger payout to the current cycle's recipient. Admin-only, callable after next_payout_time.
@@ -421,7 +444,7 @@ impl AjoContract {
         Self::extend_instance_ttl(&env);
 
         // Respect emergency pause
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        let paused: bool = Self::is_paused(&env);
         if paused {
             return Err(Error::CirclePaused);
         }
@@ -588,6 +611,7 @@ impl AjoContract {
     /// To add a future migration: bump `STORAGE_VERSION` and add an
     /// `if from < N { … }` block below.
     pub fn migrate(env: Env) {
+        Self::require_not_paused(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -701,6 +725,7 @@ impl AjoContract {
     /// cannot execute until `UPGRADE_TIMELOCK_SECS` has elapsed. Proposing a
     /// new hash replaces any previous pending proposal.
     pub fn propose_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        Self::require_not_paused(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -716,6 +741,7 @@ impl AjoContract {
 
     /// Cancel a pending upgrade proposal. Admin-only. No-op if none pending.
     pub fn cancel_upgrade(env: Env) {
+        Self::require_not_paused(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -732,6 +758,7 @@ impl AjoContract {
     /// boundary for #55: an admin can no longer swap the contract WASM in a
     /// single, immediate call.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        Self::require_not_paused(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -761,21 +788,83 @@ impl AjoContract {
         env.events().publish((Symbol::new(&env, "upgraded"),), (new_wasm_hash,));
     }
 
-    /// Emergency pause — admin-only. Halts `contribute` and `payout`.
-    pub fn pause(env: Env) {
+    /// Configure the M-of-N multi-sig that must approve `pause`. Admin-only.
+    /// Until configured, the signer set is `[admin]` with a threshold of 1.
+    pub fn set_pause_signers(env: Env, signers: Vec<Address>, threshold: u32) {
+        Self::require_not_paused(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
-        env.storage().instance().set(&DataKey::Paused, &true);
-        env.events().publish((Symbol::new(&env, "paused"),), ());
+        if threshold == 0 || threshold > signers.len() {
+            panic!("threshold must be between 1 and the number of signers");
+        }
+        for i in 0..signers.len() {
+            for j in (i + 1)..signers.len() {
+                if signers.get_unchecked(i) == signers.get_unchecked(j) {
+                    panic!("duplicate pause signer");
+                }
+            }
+        }
+        env.storage().instance().set(&DataKey::PauseSigners, &signers);
+        env.storage().instance().set(&DataKey::PauseThreshold, &threshold);
+        env.events().publish((Symbol::new(&env, "PauseSignersUpdated"),), (signers, threshold));
     }
 
-    /// Lift emergency pause — admin-only.
+    /// Designate the guardian key allowed to call `emergency_pause`. Admin-only.
+    pub fn set_guardian(env: Env, guardian: Address) {
+        Self::require_not_paused(&env);
+        let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
+        admin.require_auth();
+        env.storage().instance().set(&DataKey::Guardian, &guardian);
+        env.events().publish((Symbol::new(&env, "GuardianUpdated"),), (guardian,));
+    }
+
+    /// Pause the circle. Requires `PauseThreshold` distinct approvals from
+    /// `PauseSigners` (issue #452). Calling this while a guardian emergency
+    /// pause is active confirms it, removing its 24 h expiry.
+    pub fn pause(env: Env, approvers: Vec<Address>) {
+        let (signers, threshold) = Self::pause_signers(&env);
+        let mut approved = Vec::<Address>::new(&env);
+        for a in approvers.iter() {
+            if !signers.contains(&a) {
+                panic!("approver is not a pause signer");
+            }
+            if approved.contains(&a) {
+                panic!("duplicate approver");
+            }
+            a.require_auth();
+            approved.push_back(a);
+        }
+        if approved.len() < threshold {
+            panic_with_error!(&env, Error::InsufficientApprovals);
+        }
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage().instance().remove(&DataKey::PauseExpiresAt);
+        env.events().publish((Symbol::new(&env, "paused"),), ());
+        env.events().publish((Symbol::new(&env, "CirclePaused"),), (approved, 0u64));
+    }
+
+    /// Instant single-key pause by the guardian. Lapses automatically after
+    /// `EMERGENCY_PAUSE_TTL_SECS` unless confirmed by a multi-sig `pause`.
+    pub fn emergency_pause(env: Env) {
+        let guardian: Address = env.storage().instance().get(&DataKey::Guardian).expect("guardian not set");
+        guardian.require_auth();
+        Self::require_not_paused(&env);
+        let expires_at = env.ledger().timestamp() + EMERGENCY_PAUSE_TTL_SECS;
+        env.storage().instance().set(&DataKey::Paused, &true);
+        env.storage().instance().set(&DataKey::PauseExpiresAt, &expires_at);
+        env.events().publish((Symbol::new(&env, "paused"),), ());
+        env.events().publish((Symbol::new(&env, "CirclePaused"),), (vec![&env, guardian], expires_at));
+    }
+
+    /// Lift the pause — admin-only.
     pub fn unpause(env: Env) {
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
         env.storage().instance().set(&DataKey::Paused, &false);
+        env.storage().instance().remove(&DataKey::PauseExpiresAt);
         env.events().publish((Symbol::new(&env, "CircleResumed"),), ());
         env.events().publish((Symbol::new(&env, "unpaused"),), ());
+        env.events().publish((Symbol::new(&env, "CircleUnpaused"),), (admin,));
     }
 
     // ── Read-only ─────────────────────────────────────────────────────────────
@@ -785,7 +874,7 @@ impl AjoContract {
         let max_members: u32 = env.storage().instance().get(&DataKey::MaxMembers).unwrap_or(0);
         let next_payout_time: u64 = env.storage().instance().get(&DataKey::NextPayoutTime).unwrap_or(0);
         let completed: bool = env.storage().instance().get(&DataKey::Completed).unwrap_or(false);
-        let paused: bool = env.storage().instance().get(&DataKey::Paused).unwrap_or(false);
+        let paused: bool = Self::is_paused(&env);
         (current_cycle, max_members, next_payout_time, completed, paused)
     }
 
@@ -828,6 +917,7 @@ impl AjoContract {
     /// Propose a new admin. Only the current admin can call this.
     /// The proposed admin must call `accept_admin` to complete the transfer.
     pub fn propose_admin(env: Env, new_admin: Address) {
+        Self::require_not_paused(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
         env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
@@ -836,6 +926,7 @@ impl AjoContract {
 
     /// Accept the admin role. Only the pending admin can call this.
     pub fn accept_admin(env: Env) {
+        Self::require_not_paused(&env);
         let pending: Address = env
             .storage()
             .instance()
@@ -850,6 +941,7 @@ impl AjoContract {
 
     /// Set TTL configuration. Admin-only.
     pub fn set_ttl_config(env: Env, threshold: u32, extend_to: u32) {
+        Self::require_not_paused(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
 
@@ -877,6 +969,7 @@ impl AjoContract {
     /// Set how many missed cycles a member may accumulate in this circle
     /// before being suspended. Admin-only. Must be between 1 and max_members.
     pub fn set_missed_policy(env: Env, max_missed: u32) {
+        Self::require_not_paused(&env);
         Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
@@ -906,6 +999,7 @@ impl AjoContract {
 
     /// Lift a suspension. Admin-only.
     pub fn reinstate_member(env: Env, member: Address) {
+        Self::require_not_paused(&env);
         Self::extend_instance_ttl(&env);
         let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
         admin.require_auth();
@@ -1029,6 +1123,37 @@ impl AjoContract {
         let key = DataKey::MemberStats(member.clone());
         env.storage().persistent().set(&key, stats);
         Self::extend_persistent_ttl(env, &key);
+    }
+
+    /// Whether the circle is paused. An unconfirmed guardian pause stops
+    /// counting once its expiry has passed.
+    fn is_paused(env: &Env) -> bool {
+        if !env.storage().instance().get::<_, bool>(&DataKey::Paused).unwrap_or(false) {
+            return false;
+        }
+        match env.storage().instance().get::<_, u64>(&DataKey::PauseExpiresAt) {
+            Some(expires_at) => env.ledger().timestamp() < expires_at,
+            None => true,
+        }
+    }
+
+    fn require_not_paused(env: &Env) {
+        if Self::is_paused(env) {
+            panic_with_error!(env, Error::CirclePaused);
+        }
+    }
+
+    fn pause_signers(env: &Env) -> (Vec<Address>, u32) {
+        match env.storage().instance().get::<_, Vec<Address>>(&DataKey::PauseSigners) {
+            Some(signers) => {
+                let threshold: u32 = env.storage().instance().get(&DataKey::PauseThreshold).unwrap_or(1);
+                (signers, threshold)
+            }
+            None => {
+                let admin: Address = env.storage().instance().get(&DataKey::Admin).expect("not initialized");
+                (vec![env, admin], 1)
+            }
+        }
     }
 
     /// Test-only helper: force the payout lock to a given value.
@@ -1374,3 +1499,6 @@ mod fuzz_tests;
 
 #[cfg(test)]
 mod policy_tests;
+
+#[cfg(test)]
+mod hardening_tests;
