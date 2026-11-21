@@ -1,9 +1,35 @@
 /** @type {import('next').NextConfig} */
 
-// Security headers applied to every response (issue #294).
+// Security headers applied to every response (issues #294, #358-#361 DAST).
 // HSTS is browser-enforced once a user visits over HTTPS: the browser
 // remembers for 2 years (63072000s), applies to the whole domain
 // (includeSubDomains), and qualifies for browser preload lists.
+//
+// Content-Security-Policy notes:
+//   - default-src 'self'           — no cross-origin fetches by default
+//   - script-src  'self'           — only scripts from our own origin
+//   - style-src   'self' 'unsafe-inline' — Next.js inline critical CSS needs this
+//   - img-src     'self' data: blob: — Next.js image optimisation uses blob: URLs
+//   - font-src    'self'           — Google Fonts loaded via next/font are self-hosted
+//   - connect-src 'self' https://horizon.stellar.org https://horizon-testnet.stellar.org
+//                                  — Stellar Horizon API calls from the browser
+//   - frame-ancestors 'none'       — belt-and-suspenders alongside X-Frame-Options: DENY
+//   - object-src  'none'           — disallow Flash/plugins
+//   - base-uri    'self'           — prevent base tag injection
+//   - form-action 'self'           — forms only submit to our own origin
+const csp = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self'",
+  "connect-src 'self' https://horizon.stellar.org https://horizon-testnet.stellar.org",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join("; ");
+
 const securityHeaders = [
   {
     key: "Strict-Transport-Security",
@@ -18,6 +44,11 @@ const securityHeaders = [
   {
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=()",
+  },
+  // CSP — fixes DAST HIGH finding (ZAP rule 10038, issues #358-#361).
+  {
+    key: "Content-Security-Policy",
+    value: csp,
   },
 ];
 
