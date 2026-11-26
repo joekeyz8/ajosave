@@ -1,8 +1,6 @@
 name: Lighthouse CI
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
     branches: [main, develop]
 
@@ -19,18 +17,63 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+
       - name: Install dependencies
         run: npm ci
+
       - name: Build
         run: |
           npm run build
           npm run export || true
-      - name: Run LHCI autorun
+
+      - name: Run Lighthouse CI
         env:
           LHCI_GITHUB_COMMIT_SHA: ${{ github.sha }}
         run: |
-          npx -y @lhci/cli autorun --config=.lighthouserc.json --upload.target=temporary-public-storage
+          npx -y @lhci/cli autorun \
+            --config=.lighthouserc.json \
+            --upload.target=filesystem \
+            --upload.outputDir=./lhci-report
+
+      - name: Check for score regression (> 5 points)
+        run: |
+          node - <<'EOF'
+          const fs = require('fs');
+          const path = require('path');
+          const dir = './lhci-report';
+          if (!fs.existsSync(dir)) { console.log('No report dir found, skipping regression check.'); process.exit(0); }
+          const manifests = fs.readdirSync(dir).filter(f => f.endsWith('.json') && f.startsWith('manifest'));
+          if (manifests.length === 0) { console.log('No manifest files, skipping.'); process.exit(0); }
+          const manifest = JSON.parse(fs.readFileSync(path.join(dir, manifests[0]), 'utf8'));
+          const categories = ['performance', 'seo', 'best-practices'];
+          const thresholds = { performance: 0.85, seo: 0.90, 'best-practices': 0.90 };
+          let failed = false;
+          for (const entry of manifest) {
+            const summary = entry.summary || {};
+            for (const cat of categories) {
+              const score = summary[cat];
+              if (score === undefined) continue;
+              const threshold = thresholds[cat];
+              const dropLimit = threshold - 0.05;
+              if (score < dropLimit) {
+                console.error(`FAIL: ${cat} score ${(score*100).toFixed(0)} dropped more than 5 points below threshold ${(threshold*100).toFixed(0)}`);
+                failed = true;
+              }
+            }
+          }
+          if (failed) process.exit(1);
+          console.log('No score regressions detected.');
+          EOF
+
+      - name: Upload Lighthouse HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: lhci-report/
+          retention-days: 30
