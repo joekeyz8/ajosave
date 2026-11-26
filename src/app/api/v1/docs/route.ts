@@ -55,11 +55,21 @@ export function GET() {
       "Content-Type": "text/html; charset=utf-8",
       // Full security header suite — these are required here because Next.js
       // next.config.mjs headers() does not apply to API routes.
+      // Headers previously omitted from this route caused ZAP HIGH/CRITICAL
+      // findings on issues #362 and #363 (rules 10035, 10038, COEP/COOP/CORP).
       "Content-Security-Policy": DOCS_CSP,
       "X-Content-Type-Options": "nosniff",
       "X-Frame-Options": "DENY",
       "Referrer-Policy": "strict-origin-when-cross-origin",
       "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+      // Transport security — ZAP rule 10035
+      "Strict-Transport-Security": "max-age=63072000; includeSubDomains; preload",
+      // Cross-origin isolation — mitigates Spectre side-channel attacks
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      // Prevents Adobe Flash/PDF cross-domain data reads
+      "X-Permitted-Cross-Domain-Policies": "none",
     },
   });
 }
