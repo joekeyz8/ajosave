@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { leaveCircle } from "@/server/services/circle.service";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 
-export const POST = withErrorHandler(
+export const POST = withRouteRateLimit(withErrorHandler(
   async (req: NextRequest, { params }: { params: { id: string } }) => {
     const session = await getServerSession(authOptions);
     if (!session?.user) {
@@ -19,4 +19,4 @@ export const POST = withErrorHandler(
       message: "Successfully left the circle",
     });
   }
-);
+));

@@ -63,9 +63,20 @@ export function useFreighterWallet(): UseFreighterWalletReturn {
 
     setState((prev) => ({ ...prev, connectionState: "connecting", error: null }));
 
+    // Set up a 15-second timeout for the connection request
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error("CONNECTION_TIMEOUT"));
+      }, 15_000);
+    });
+
     try {
-      // Request access from Freighter
-      const accessResult = await requestAccess();
+      // Race between the connection request and the timeout
+      const accessResult = await Promise.race([
+        requestAccess(),
+        timeoutPromise,
+      ]);
 
       if (accessResult.error) {
         const errorStr = String(accessResult.error);
@@ -73,7 +84,7 @@ export function useFreighterWallet(): UseFreighterWalletReturn {
 
         if (/rejected|denied/i.test(errorStr)) {
           message =
-            "Connection request was rejected. You can enter your Stellar key manually.";
+            "Connection request was rejected. Open the Freighter extension and try again.";
         } else if (/locked/i.test(errorStr)) {
           message =
             "Your Freighter wallet is locked. Please unlock it and try again.";
@@ -129,12 +140,23 @@ export function useFreighterWallet(): UseFreighterWalletReturn {
         error: null,
       });
     } catch (err) {
-      console.error("Unexpected error in useFreighterWallet.connect():", err);
-      setState((prev) => ({
-        ...prev,
-        connectionState: "disconnected",
-        error: "An unexpected error occurred. Please try again.",
-      }));
+      clearTimeout(timeoutId!);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      
+      if (errorMsg === "CONNECTION_TIMEOUT") {
+        setState((prev) => ({
+          ...prev,
+          connectionState: "disconnected",
+          error: "Freighter did not respond. Open the Freighter extension and try again.",
+        }));
+      } else {
+        console.error("Unexpected error in useFreighterWallet.connect():", err);
+        setState((prev) => ({
+          ...prev,
+          connectionState: "disconnected",
+          error: "An unexpected error occurred. Please try again.",
+        }));
+      }
     }
   };
 

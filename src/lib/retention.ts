@@ -60,6 +60,9 @@ export async function applyPolicy(
 
   if (dryRun) {
     const { rows } = await query<{ count: string }>(
+      /* eslint-disable-next-line local/no-query-interpolation --
+         p.table and p.column come exclusively from the static POLICIES constant,
+         validated by validatePolicy() against /^[a-z_]+$/. Never user input. */
       `SELECT COUNT(*)::text AS count FROM ${p.table} WHERE ${predicate}`,
       [p.days]
     );
@@ -69,6 +72,7 @@ export async function applyPolicy(
   let deleted = 0;
   for (let batch = 0; batch < MAX_BATCHES_PER_RUN; batch++) {
     const { rowCount } = await query(
+      /* eslint-disable-next-line local/no-query-interpolation -- same as above */
       `DELETE FROM ${p.table} WHERE ctid IN (SELECT ctid FROM ${p.table} WHERE ${predicate} LIMIT $2)`,
       [p.days, batchSize]
     );

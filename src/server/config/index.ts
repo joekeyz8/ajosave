@@ -33,7 +33,7 @@ export const serverConfig = {
     apiKey: env.RESEND_API_KEY,
     fromEmail: env.RESEND_FROM_EMAIL,
   },
-  redis: { url: env.REDIS_URL },
+  redis: { url: env.REDIS_URL, sentinelUrl: env.REDIS_SENTINEL_URL },
   database: { url: env.DATABASE_URL },
   cronSecret: env.CRON_SECRET,
   authSecret: env.NEXTAUTH_SECRET || "development-secret-keep-it-safe",

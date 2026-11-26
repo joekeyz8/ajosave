@@ -1,4 +1,4 @@
-# Branch Protection — `main`
+# Branch Protection — `main` and `develop`
 
 ## Rules in effect
 
@@ -6,8 +6,10 @@
 |---|---|
 | Direct pushes to `main` | **Blocked** — all changes via PR |
 | Required approving reviews | **1** |
+| Code owner review (`.github/CODEOWNERS`) | **Required** |
+| Rules apply to admins | **Yes** |
 | Dismiss stale reviews on new push | **Yes** |
-| Required CI checks before merge | `Lint & Type Check`, `Unit Tests`, `Next.js Build` |
+| Required CI checks before merge | `Lint & Type Check`, `Unit Tests`, `Next.js Build`, `CodeQL Analysis (JavaScript/TypeScript)`, `npm Dependency Audit` |
 | Branches must be up-to-date before merge | **Yes** |
 | Force push | **Disabled** |
 | Branch deletion | **Disabled** |

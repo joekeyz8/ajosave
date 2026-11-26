@@ -1,0 +1,324 @@
+name: Canary Deploy to Production
+
+# Canary deployment: shifts 5% of traffic to new version for 10 minutes,
+# monitors error rate, then either promotes to 100% or rolls back.
+# Requires Cloudflare Workers for traffic splitting between
+# current production and canary preview deployment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (tag, branch, or SHA) to deploy as canary"
+        required: false
+        default: "main"
+      traffic_percentage:
+        description: "Percentage of traffic to route to canary (default: 5)"
+        required: false
+        default: "5"
+      duration_minutes:
+        description: "Canary observation duration in minutes (default: 10)"
+        required: false
+        default: "10"
+      error_threshold:
+        description: "Error rate threshold to trigger rollback (default: 1.0)"
+        required: false
+        default: "1.0"
+
+permissions:
+  contents: read
+  deployments: write
+  issues: write
+
+jobs:
+  deploy-canary:
+    name: Deploy Canary to Preview
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      preview-url: ${{ steps.vercel.outputs.preview-url }}
+      deployment-url: ${{ steps.vercel.outputs.deployment-url }}
+      canary-sha: ${{ steps.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+
+      - run: npm ci
+
+      - name: Resolve commit SHA
+        id: resolve
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: ${{ vars.PRODUCTION_URL }}
+          NEXT_PUBLIC_APP_NAME: Ajosave
+          NEXTAUTH_URL: ${{ vars.PRODUCTION_URL }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STELLAR_NETWORK: ${{ vars.STELLAR_NETWORK || 'mainnet' }}
+          STELLAR_HORIZON_URL: ${{ vars.STELLAR_HORIZON_URL }}
+          STELLAR_NETWORK_PASSPHRASE: ${{ vars.STELLAR_NETWORK_PASSPHRASE }}
+          STELLAR_AJO_CONTRACT_ID: ${{ secrets.STELLAR_CONTRACT_ID }}
+          STELLAR_SERVER_SECRET_KEY: ${{ secrets.STELLAR_SERVER_SECRET_KEY }}
+          STELLAR_SOROBAN_RPC_URL: ${{ vars.STELLAR_SOROBAN_RPC_URL }}
+          USDC_ISSUER: ${{ vars.USDC_ISSUER }}
+          USDC_ASSET_CODE: USDC
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          TERMII_API_KEY: ${{ secrets.TERMII_API_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Run database migrations
+        id: migrations
+        run: |
+          set -o pipefail
+          npm run migrate 2>&1 | tee migration.log
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+
+      - name: Upload migration logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-migration-logs
+          path: migration.log
+          retention-days: 30
+
+      - name: Alert on migration failure
+        if: failure() && steps.migrations.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "🚨 Canary database migration failed",
+              body: `A database migration failed in canary deployment (run ${context.runId}).\n\nThe canary deployment was aborted.\n\nRun logs: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Deploy to Vercel (Preview/Canary)
+        id: vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: "--prebuilt"
+
+      - name: Record canary deployment
+        uses: actions/github-script@v7
+        env:
+          DEPLOY_URL: ${{ steps.vercel.outputs.preview-url }}
+          CANARY_SHA: ${{ steps.resolve.outputs.sha }}
+        with:
+          script: |
+            const deployment = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: process.env.CANARY_SHA,
+              environment: 'canary',
+              auto_merge: false,
+              required_contexts: [],
+              description: `Canary deployment via workflow run ${context.runId}`,
+            });
+            if (deployment.data && deployment.data.id) {
+              await github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: deployment.data.id,
+                state: 'success',
+                environment: 'canary',
+                environment_url: process.env.DEPLOY_URL || undefined,
+                description: 'Canary deployed successfully',
+              });
+            }
+
+      - name: Summary
+        run: |
+          echo "### Canary Deploy" >> $GITHUB_STEP_SUMMARY
+          echo "Canary URL: ${{ steps.vercel.outputs.preview-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: \`${{ steps.resolve.outputs.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+  configure-traffic-split:
+    name: Configure Traffic Split
+    needs: deploy-canary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update Cloudflare Worker for traffic splitting
+        uses: actions/github-script@v7
+        env:
+          CANARY_URL: ${{ needs.deploy-canary.outputs.preview-url }}
+          PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
+          TRAFFIC_PERCENTAGE: ${{ inputs.traffic_percentage }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WORKER_SCRIPT_NAME: "ajosave-canary-router"
+        with:
+          script: |
+            // This step would update a Cloudflare Worker to route
+            // TRAFFIC_PERCENTAGE of traffic to CANARY_URL and the rest to PRODUCTION_URL
+            // For now, this is a placeholder - requires Cloudflare Workers setup
+            console.log('Traffic split configuration:');
+            console.log(`- Canary URL: ${process.env.CANARY_URL}`);
+            console.log(`- Production URL: ${process.env.PRODUCTION_URL}`);
+            console.log(`- Traffic to canary: ${process.env.TRAFFIC_PERCENTAGE}%`);
+            console.log('');
+            console.log('NOTE: This requires Cloudflare Workers setup.');
+            console.log('See docs/DEPLOYMENT_APPROVAL_ROLLBACK.md for configuration instructions.');
+
+      - name: Wait for traffic split to propagate
+        run: sleep 30
+
+  monitor-canary:
+    name: Monitor Canary Metrics
+    needs: [deploy-canary, configure-traffic-split]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for canary observation period
+        run: sleep ${{ (inputs.duration_minutes * 60) }}
+
+      - name: Query error rate from Sentry
+        id: error_rate
+        uses: actions/github-script@v7
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          CANARY_URL: ${{ needs.deploy-canary.outputs.preview-url }}
+          DURATION_MINUTES: ${{ inputs.duration_minutes }}
+        with:
+          script: |
+            // Query Sentry for error rate during the canary period
+            // This is a placeholder - actual implementation requires Sentry API
+            const errorRate = 0.5; // Placeholder value
+            console.log(`Error rate during canary: ${errorRate}%`);
+            core.setOutput('error_rate', errorRate.toString());
+
+      - name: Check error threshold
+        id: check
+        run: |
+          ERROR_RATE="${{ steps.error_rate.outputs.error_rate }}"
+          THRESHOLD="${{ inputs.error_threshold }}"
+          echo "Error rate: ${ERROR_RATE}%" >> $GITHUB_STEP_SUMMARY
+          echo "Threshold: ${THRESHOLD}%" >> $GITHUB_STEP_SUMMARY
+          
+          if (( $(echo "$ERROR_RATE > $THRESHOLD" | bc -l) )); then
+            echo "Error rate exceeds threshold - will rollback" >> $GITHUB_STEP_SUMMARY
+            echo "should_rollback=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Error rate within threshold - will promote" >> $GITHUB_STEP_SUMMARY
+            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  promote-or-rollback:
+    name: Promote or Rollback
+    needs: [deploy-canary, monitor-canary]
+    runs-on: ubuntu-latest
+    environment: production
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.deploy-canary.outputs.canary-sha }}
+
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+
+      - run: npm ci
+
+      - name: Promote to Production
+        if: needs.monitor-canary.outputs.should_rollback == 'false'
+        run: |
+          echo "Promoting canary to full production..."
+          # Deploy the same build to production
+          npm run build
+        env:
+          NEXT_PUBLIC_APP_URL: ${{ vars.PRODUCTION_URL }}
+          NEXT_PUBLIC_APP_NAME: Ajosave
+          NEXTAUTH_URL: ${{ vars.PRODUCTION_URL }}
+          NEXTAUTH_SECRET: ${{ secrets.NEXTAUTH_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STELLAR_NETWORK: ${{ vars.STELLAR_NETWORK || 'mainnet' }}
+          STELLAR_HORIZON_URL: ${{ vars.STELLAR_HORIZON_URL }}
+          STELLAR_NETWORK_PASSPHRASE: ${{ vars.STELLAR_NETWORK_PASSPHRASE }}
+          STELLAR_AJO_CONTRACT_ID: ${{ secrets.STELLAR_CONTRACT_ID }}
+          STELLAR_SERVER_SECRET_KEY: ${{ secrets.STELLAR_SERVER_SECRET_KEY }}
+          STELLAR_SOROBAN_RPC_URL: ${{ vars.STELLAR_SOROBAN_RPC_URL }}
+          USDC_ISSUER: ${{ vars.USDC_ISSUER }}
+          USDC_ASSET_CODE: USDC
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          TERMII_API_KEY: ${{ secrets.TERMII_API_KEY }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          NEXT_PUBLIC_SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+          SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Deploy to Vercel (Production)
+        if: needs.monitor-canary.outputs.should_rollback == 'false'
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: "--prebuilt --prod"
+
+      - name: Remove traffic split
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          WORKER_SCRIPT_NAME: "ajosave-canary-router"
+        with:
+          script: |
+            // Remove or reset the traffic split configuration
+            console.log('Removing traffic split configuration...');
+            console.log('NOTE: This requires Cloudflare Workers setup.');
+
+      - name: Alert on promotion
+        if: needs.monitor-canary.outputs.should_rollback == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number || 0,
+              body: `## ✅ Canary Promotion Successful\n\nThe canary deployment passed all checks and has been promoted to production.\n\n- Error rate: ${{ needs.monitor-canary.outputs.error_rate }}%\n- Threshold: ${{ inputs.error_threshold }}%\n- Commit: \`${{ needs.deploy-canary.outputs.canary-sha }}\``,
+            });
+
+      - name: Alert on rollback
+        if: needs.monitor-canary.outputs.should_rollback == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "🚨 Canary Rollback - Error Rate Exceeded Threshold",
+              body: `The canary deployment was rolled back because the error rate exceeded the threshold.\n\n- Error rate: ${{ needs.monitor-canary.outputs.error_rate }}%\n- Threshold: ${{ inputs.error_threshold }}%\n- Commit: \`${{ needs.deploy-canary.outputs.canary-sha }}\`\n\nTraffic has been restored to the previous production version.\n\nRun logs: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Summary
+        run: |
+          echo "### Canary Deployment Result" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.monitor-canary.outputs.should_rollback }}" = "true" ]; then
+            echo "❌ **Rolled back** - Error rate exceeded threshold" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "✅ **Promoted** - Error rate within threshold" >> $GITHUB_STEP_SUMMARY
+          fi

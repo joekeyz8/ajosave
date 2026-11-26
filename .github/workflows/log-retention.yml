@@ -1,0 +1,231 @@
+name: Log Retention and Archival
+
+# Monthly workflow to archive logs from hot storage to cold storage
+# and purge logs exceeding retention periods per GDPR and financial regulations.
+# See docs/privacy-retention-guide.md for details.
+
+on:
+  schedule:
+    # Run on the 1st of each month at 00:00 UTC
+    - cron: "0 0 1 * *"
+  workflow_dispatch:
+    inputs:
+      manual_trigger:
+        description: "Manual trigger for urgent log deletion"
+        required: false
+        default: "false"
+      date_from:
+        description: "Start date for log deletion (YYYY-MM-DD)"
+        required: false
+      date_to:
+        description: "End date for log deletion (YYYY-MM-DD)"
+        required: false
+
+concurrency:
+  group: log-retention
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  archive-logs:
+    name: Archive Logs to Cold Storage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Calculate date range
+        id: dates
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.manual_trigger }}" = "true" ]; then
+            FROM_DATE="${{ inputs.date_from }}"
+            TO_DATE="${{ inputs.date_to }}"
+          else
+            # Archive logs from the previous month
+            FROM_DATE=$(date -d "$(date +%Y-%m-01) -1 month" +%Y-%m-%d)
+            TO_DATE=$(date -d "$(date +%Y-%m-01) -1 day" +%Y-%m-%d)
+          fi
+          
+          echo "from_date=${FROM_DATE}" >> "$GITHUB_OUTPUT"
+          echo "to_date=${TO_DATE}" >> "$GITHUB_OUTPUT"
+          echo "Archive period: ${FROM_DATE} to ${TO_DATE}"
+
+      - name: Export Sentry logs
+        id: sentry
+        run: |
+          # Export logs from Sentry for the date range
+          # This uses Sentry's API to fetch events
+          curl -sL \
+            -H "Authorization: Bearer ${{ secrets.SENTRY_AUTH_TOKEN }}" \
+            "https://sentry.io/api/0/projects/${{ vars.SENTRY_ORG }}/${{ vars.SENTRY_PROJECT }}/events/?query=is:unresolved+timestamp>=${{ steps.dates.outputs.from_date }}+timestamp<${{ steps.dates.outputs.to_date }}" \
+            -o sentry-logs.json
+          
+          if [ -s sentry-logs.json ]; then
+            echo "exported=true" >> "$GITHUB_OUTPUT"
+            echo "Exported $(wc -l < sentry-logs.json) lines from Sentry"
+          else
+            echo "exported=false" >> "$GITHUB_OUTPUT"
+            echo "No Sentry logs for this period"
+          fi
+
+      - name: Export Vercel logs
+        id: vercel
+        run: |
+          # Export logs from Vercel for the date range
+          # This uses Vercel's CLI to fetch logs
+          npm install -g vercel@latest
+          
+          vercel logs --token=${{ secrets.VERCEL_TOKEN }} \
+            --scope=${{ secrets.VERCEL_ORG_ID }} \
+            --since="${{ steps.dates.outputs.from_date }}" \
+            --until="${{ steps.dates.outputs.to_date }}" \
+            > vercel-logs.json 2>&1 || true
+          
+          if [ -s vercel-logs.json ] && [ "$(cat vercel-logs.json)" != "No logs found" ]; then
+            echo "exported=true" >> "$GITHUB_OUTPUT"
+            echo "Exported logs from Vercel"
+          else
+            echo "exported=false" >> "$GITHUB_OUTPUT"
+            echo "No Vercel logs for this period"
+          fi
+
+      - name: Compress and encrypt logs
+        if: steps.sentry.outputs.exported == 'true' || steps.vercel.outputs.exported == 'true'
+        run: |
+          # Combine logs into a single archive
+          cat sentry-logs.json vercel-logs.json > combined-logs.json 2>/dev/null || true
+          
+          # Compress
+          gzip combined-logs.json
+          
+          # Encrypt with AES-256-GCM using OpenSSL
+          # Generate a random encryption key for this archive
+          ENCRYPTION_KEY=$(openssl rand -hex 32)
+          echo "${ENCRYPTION_KEY}" > encryption-key.txt
+          
+          # Encrypt the compressed archive
+          openssl enc -aes-256-gcm -salt -pbkdf2 \
+            -in combined-logs.json.gz \
+            -out combined-logs.json.gz.enc \
+            -pass file:encryption-key.txt
+          
+          # Generate archive name with date
+          ARCHIVE_NAME="ajosave-logs-${{ steps.dates.outputs.from_date }}-${{ steps.dates.outputs.to_date }}.json.gz.enc"
+          mv combined-logs.json.gz.enc "${ARCHIVE_NAME}"
+          
+          echo "archive_name=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
+          echo "encryption_key=${ENCRYPTION_KEY}" >> "$GITHUB_ENV"
+
+      - name: Upload to cold storage
+        if: steps.sentry.outputs.exported == 'true' || steps.vercel.outputs.exported == 'true'
+        run: |
+          # Upload encrypted archive to S3-compatible cold storage
+          # Using AWS CLI
+          pip install awscli
+          
+          aws s3 cp "${ARCHIVE_NAME}" \
+            "s3://${{ secrets.COLD_STORAGE_BUCKET }}/logs/${ARCHIVE_NAME}" \
+            --region "${{ secrets.COLD_STORAGE_REGION }}" \
+            --access-key "${{ secrets.COLD_STORAGE_ACCESS_KEY }}" \
+            --secret-key "${{ secrets.COLD_STORAGE_SECRET_KEY }}"
+          
+          # Store encryption key securely (e.g., in secrets manager)
+          # For now, we'll upload it as a separate encrypted file
+          echo "${ENCRYPTION_KEY}" | openssl enc -aes-256-cbc -salt \
+            -pass pass:"${{ secrets.COLD_STORAGE_ENCRYPTION_PASSWORD }}" \
+            -out "${ARCHIVE_NAME}.key.enc"
+          
+          aws s3 cp "${ARCHIVE_NAME}.key.enc" \
+            "s3://${{ secrets.COLD_STORAGE_BUCKET }}/keys/${ARCHIVE_NAME}.key.enc" \
+            --region "${{ secrets.COLD_STORAGE_REGION }}" \
+            --access-key "${{ secrets.COLD_STORAGE_ACCESS_KEY }}" \
+            --secret-key "${{ secrets.COLD_STORAGE_SECRET_KEY }}"
+          
+          echo "Uploaded archive to cold storage"
+
+      - name: Delete from hot storage after archival
+        if: steps.sentry.outputs.exported == 'true' || steps.vercel.outputs.exported == 'true'
+        run: |
+          # Delete logs from Sentry after successful archival
+          if [ "${{ steps.sentry.outputs.exported }}" = "true" ]; then
+            # Sentry doesn't have a bulk delete API via CLI
+            # This would need to use Sentry's API to delete events
+            echo "Note: Sentry logs require manual deletion via Sentry dashboard"
+            echo "or use Sentry's API with administrative privileges"
+          fi
+          
+          # Vercel logs are automatically deleted after 90 days
+          # No manual deletion needed
+          echo "Vercel logs will be automatically deleted after 90-day retention"
+
+      - name: Purge expired logs from cold storage
+        run: |
+          # Delete logs older than 2 years from cold storage
+          pip install awscli
+          
+          # Find and delete files older than 2 years
+          aws s3 ls "s3://${{ secrets.COLD_STORAGE_BUCKET }}/logs/" \
+            --region "${{ secrets.COLD_STORAGE_REGION }}" \
+            --access-key "${{ secrets.COLD_STORAGE_ACCESS_KEY }}" \
+            --secret-key "${{ secrets.COLD_STORAGE_SECRET_KEY }}" \
+            | while read -r line; do
+              FILE_DATE=$(echo "$line" | awk '{print $1}')
+              FILE_NAME=$(echo "$line" | awk '{print $4}')
+              
+              # Check if file is older than 2 years
+              FILE_EPOCH=$(date -d "$FILE_DATE" +%s)
+              TWO_YEARS_AGO=$(date -d "2 years ago" +%s)
+              
+              if [ "$FILE_EPOCH" -lt "$TWO_YEARS_AGO" ]; then
+                echo "Deleting expired log: $FILE_NAME"
+                aws s3 rm "s3://${{ secrets.COLD_STORAGE_BUCKET }}/logs/$FILE_NAME" \
+                  --region "${{ secrets.COLD_STORAGE_REGION }}" \
+                  --access-key "${{ secrets.COLD_STORAGE_ACCESS_KEY }}" \
+                  --secret-key "${{ secrets.COLD_STORAGE_SECRET_KEY }}"
+                
+                # Also delete the corresponding encryption key
+                KEY_FILE="${FILE_NAME}.key.enc"
+                aws s3 rm "s3://${{ secrets.COLD_STORAGE_BUCKET }}/keys/$KEY_FILE" \
+                  --region "${{ secrets.COLD_STORAGE_REGION }}" \
+                  --access-key "${{ secrets.COLD_STORAGE_ACCESS_KEY }}" \
+                  --secret-key "${{ secrets.COLD_STORAGE_SECRET_KEY }}" || true
+              fi
+            done
+
+      - name: Log archival result
+        if: always()
+        run: |
+          echo "### Log Retention Job" >> $GITHUB_STEP_SUMMARY
+          echo "**Date Range:** ${{ steps.dates.outputs.from_date }} to ${{ steps.dates.outputs.to_date }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Sentry Logs:** ${{ steps.sentry.outputs.exported == 'true' && 'Exported and archived' || 'No logs' }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Vercel Logs:** ${{ steps.vercel.outputs.exported == 'true' && 'Exported and archived' || 'No logs' }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Cold Storage:** Expired logs (older than 2 years) purged" >> $GITHUB_STEP_SUMMARY
+
+      - name: Notify on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: "🚨 Log Retention Job Failed",
+              body: `The log retention job failed in run ${context.runId}.\n\nDate range: ${{ steps.dates.outputs.from_date }} to ${{ steps.dates.outputs.to_date }}\n\nRun logs: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+  audit-log-retention:
+    name: Log Retention in Audit Log
+    runs-on: ubuntu-latest
+    needs: archive-logs
+    if: always()
+    steps:
+      - name: Record retention job execution
+        run: |
+          # This would log to the application's audit_logs table
+          # For now, we'll just output a summary
+          echo "Retention job executed: ${{ github.run_number }}"
+          echo "Date range: ${{ needs.archive-logs.steps.dates.outputs.from_date }} to ${{ needs.archive-logs.steps.dates.outputs.to_date }}"
+          echo "Status: ${{ job.status }}"

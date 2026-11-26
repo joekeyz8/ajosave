@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { query, getPoolStats } from "@/lib/db";
 import { serverConfig } from "@/server/config";
 import { checkHorizonHealth } from "@/lib/stellar";
+import { withRouteRateLimit } from "@/server/middleware";
 
 async function checkDb(): Promise<boolean> {
   try {
@@ -25,7 +26,7 @@ async function checkRedis(): Promise<boolean> {
   }
 }
 
-export async function GET() {
+export const GET = withRouteRateLimit(async () => {
   const [db, redis, horizon] = await Promise.all([checkDb(), checkRedis(), checkHorizonHealth()]);
 
   const healthy = db && redis;
@@ -48,4 +49,4 @@ export async function GET() {
     },
     { status: healthy ? 200 : 503 }
   );
-}
+});

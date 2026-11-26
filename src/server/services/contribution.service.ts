@@ -1,6 +1,15 @@
+import logger from "@/lib/logger";
+import { query } from "@/lib/db";
 import { query } from "@/lib/db";
 import { randomUUID } from "crypto";
 import type { Contribution } from "@/types";
+
+/* eslint-disable local/no-query-interpolation --
+ * getContributionsByCircleFiltered builds WHERE clauses from a code-controlled
+ * conditions array using only $N placeholders; all values are bound via the
+ * params array. This is the same legitimate dynamic-query pattern as
+ * pagination.ts and retention.ts — no user input ever reaches the SQL string.
+ */
 
 export interface ContributionRow {
   id: string;
@@ -70,7 +79,7 @@ export async function getContributionsByCircleFiltered(
   const limitPlaceholder = `$${idx++}`;
 
   const { rows } = await query<ContributionRow>(
-    `SELECT
+    `SELECT /* eslint-disable-line local/no-query-interpolation -- whereClause and limitPlaceholder are built from code-controlled $N conditions; all values bound via params */
        c.id,
        c.cycle_number        AS "cycleNumber",
        c.amount_usdc         AS "amountUsdc",
@@ -97,7 +106,8 @@ export async function getContributionsByCircleFiltered(
 
   // Total count for the filtered set (for UI pagination metadata)
   const { rows: countRows } = await query<{ count: string }>(
-    `SELECT COUNT(*)::text AS count
+    `SELECT /* eslint-disable-line local/no-query-interpolation -- conditions array contains only $N placeholders; values bound via params */
+     COUNT(*)::text AS count
      FROM contributions c
      WHERE ${conditions
        .filter((c) => !c.includes("c.created_at <"))
@@ -109,6 +119,8 @@ export async function getContributionsByCircleFiltered(
 
   return { items, nextCursor, hasMore, total };
 }
+
+/* eslint-enable local/no-query-interpolation */
 
 /**
  * Legacy paginated contributions query (kept for backward compatibility with

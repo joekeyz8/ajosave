@@ -11,6 +11,22 @@
   margin-bottom: var(--space-2);
 }
 
+/*
+ * Dark-mode variant (issue #383).
+ *
+ * The illustration strokes/fills already adapt via the design tokens, but a
+ * subtle brand-tinted backdrop gives the SVG presence against the dark
+ * surface. Scoped to [data-theme="dark"] so it has no effect in light mode.
+ */
+[data-theme="dark"] .illustration {
+  background: radial-gradient(
+    circle at center,
+    rgba(18, 163, 98, 0.12) 0%,
+    transparent 65%
+  );
+  border-radius: var(--radius-full);
+}
+
 .title {
   font-size: var(--text-xl);
   font-weight: var(--font-semibold);

@@ -1,7 +1,8 @@
 "use client";
 
 import type { AdminPayoutRow } from "@/server/services/admin.service";
-import { format } from "date-fns";
+import { formatDate } from "@/lib/date-formatting";
+import { useLocale } from "next-intl";
 import { CopyableText } from "@/components/ui/CopyableText";
 import styles from "./admin.module.css";
 
@@ -14,6 +15,7 @@ interface PayoutsTableProps {
 }
 
 export function PayoutsTable({ payouts }: PayoutsTableProps) {
+  const locale = useLocale();
   if (payouts.length === 0) {
     return <div className={styles.empty}><p>No payouts found.</p></div>;
   }
@@ -60,7 +62,7 @@ export function PayoutsTable({ payouts }: PayoutsTableProps) {
                   />
                 </a>
               </td>
-              <td>{format(new Date(payout.paidAt), "MMM d, yyyy HH:mm")}</td>
+              <td>{formatDate(new Date(payout.paidAt), locale, { hour: "2-digit", minute: "2-digit" })}</td>
             </tr>
           ))}
         </tbody>

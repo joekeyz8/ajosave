@@ -40,7 +40,15 @@ export async function POST(req: NextRequest) {
     serverConfig.paystack.secretKey
   );
   if (!sigResult.valid) {
-    logger.warn({ reason: sigResult.reason }, "Invalid Paystack webhook signature");
+    logger.warn(
+      {
+        securityAudit: true,
+        event: "PAYSTACK_WEBHOOK_INVALID_SIGNATURE",
+        reason: sigResult.reason,
+        ip: req.headers.get("x-forwarded-for") ?? undefined,
+      },
+      "Invalid Paystack webhook signature"
+    );
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 
@@ -73,24 +81,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Missing event ID" }, { status: 400 });
   }
 
-  // ── 5. DB-level deduplication (idempotency check) ────────────────────────
-  // Uses a 24-hour window consistent with the original implementation.
-  const { rows: existingEvent } = await query(
-    `SELECT id FROM processed_webhooks
-     WHERE id = $1
-       AND provider = 'paystack'
-       AND created_at >= NOW() - INTERVAL '24 HOURS'`,
-    [eventId]
-  );
-
-  if (existingEvent.length > 0) {
-    logger.info({ eventId }, "Paystack webhook already processed (duplicate)");
-    return NextResponse.json({ received: true, duplicate: true });
-  }
-
   logger.info({ eventId, eventType: event.event }, "Paystack webhook verified and accepted");
 
-  // ── 6. Event-specific handling ───────────────────────────────────────────
+  // ── 5. Event-specific handling inside transactions ───────────────────────
+  // All event processing happens inside a transaction with idempotency checks.
 
   if (event.event === "charge.failed") {
     const data = event.data as Record<string, unknown> | undefined;
@@ -98,29 +92,86 @@ export async function POST(req: NextRequest) {
     if (!reference) {
       return NextResponse.json({ error: "Missing reference" }, { status: 400 });
     }
-    await query(
-      `UPDATE contributions SET status = 'failed'
-       WHERE paystack_reference = $1 AND status = 'pending'`,
-      [reference]
-    );
-    // Record as processed so a replay of the same failure is a no-op
-    await query(
-      "INSERT INTO processed_webhooks (id, provider, event_type, payload) VALUES ($1, 'paystack', $2, $3) ON CONFLICT DO NOTHING",
-      [eventId, event.event, event]
-    );
-    return NextResponse.json({ received: true });
+
+    try {
+      await transaction(async (q) => {
+        // Check for duplicate within transaction (atomic)
+        const { rows: existing } = await q<{ id: string }>(
+          `SELECT id FROM processed_webhooks
+           WHERE id = $1
+             AND provider = 'paystack'
+             AND created_at >= NOW() - INTERVAL '24 HOURS'
+           LIMIT 1`,
+          [eventId]
+        );
+
+        if (existing.length > 0) {
+          logger.info({ eventId }, "Paystack charge.failed webhook already processed (duplicate)");
+          return; // Idempotent: webhook already processed
+        }
+
+        // Mark as processed
+        await q(
+          "INSERT INTO processed_webhooks (id, provider, event_type, payload) VALUES ($1, 'paystack', $2, $3)",
+          [eventId, event.event, event]
+        );
+
+        // Update contribution
+        await q(
+          `UPDATE contributions SET status = 'failed'
+           WHERE paystack_reference = $1 AND status = 'pending'`,
+          [reference]
+        );
+      });
+
+      return NextResponse.json({ received: true });
+    } catch (err) {
+      if ((err as { code?: string }).code === "23505") {
+        logger.info({ eventId }, "Duplicate Paystack charge.failed webhook detected during insert (race)");
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      logger.error({ err, eventId }, "Error processing Paystack charge.failed webhook");
+      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    }
   }
 
   if (event.event !== "charge.success") {
     // Record non-charge events to prevent replays
-    await query(
-      "INSERT INTO processed_webhooks (id, provider, event_type, payload) VALUES ($1, 'paystack', $2, $3) ON CONFLICT DO NOTHING",
-      [eventId, event.event, event]
-    );
+    try {
+      await transaction(async (q) => {
+        // Check for duplicate within transaction
+        const { rows: existing } = await q<{ id: string }>(
+          `SELECT id FROM processed_webhooks
+           WHERE id = $1
+             AND provider = 'paystack'
+             AND created_at >= NOW() - INTERVAL '24 HOURS'
+           LIMIT 1`,
+          [eventId]
+        );
+
+        if (existing.length > 0) {
+          logger.info({ eventId }, "Paystack non-charge webhook already processed (duplicate)");
+          return; // Idempotent
+        }
+
+        // Record non-charge event
+        await q(
+          "INSERT INTO processed_webhooks (id, provider, event_type, payload) VALUES ($1, 'paystack', $2, $3)",
+          [eventId, event.event, event]
+        );
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code === "23505") {
+        logger.info({ eventId }, "Duplicate non-charge webhook detected during insert (race)");
+        return NextResponse.json({ received: true, duplicate: true });
+      }
+      logger.error({ err, eventId }, "Error processing non-charge webhook");
+      return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    }
     return NextResponse.json({ received: true });
   }
 
-  // ── 7. charge.success: confirm contribution inside a transaction ─────────
+  // ── 6. charge.success: confirm contribution inside a transaction ─────────
   const data = event.data as Record<string, unknown> | undefined;
   const reference = data?.reference as string | undefined;
   if (!reference) {
@@ -129,6 +180,21 @@ export async function POST(req: NextRequest) {
 
   try {
     await transaction(async (q) => {
+      // Check for duplicate within transaction (atomic idempotency check)
+      const { rows: existing } = await q<{ id: string }>(
+        `SELECT id FROM processed_webhooks
+         WHERE id = $1
+           AND provider = 'paystack'
+           AND created_at >= NOW() - INTERVAL '24 HOURS'
+         LIMIT 1`,
+        [eventId]
+      );
+
+      if (existing.length > 0) {
+        logger.info({ eventId }, "Paystack charge.success webhook already processed (duplicate)");
+        return; // Idempotent: webhook already processed
+      }
+
       // Record the webhook as processed within the transaction to ensure
       // atomicity: if the contribution update fails the webhook record rolls back.
       await q(

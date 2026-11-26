@@ -49,8 +49,18 @@
   height: 100%;
   background: var(--color-brand-primary);
   border-radius: var(--radius-full);
-  transition: width 0.4s ease;
+  /* 600 ms mount animation (issue #401). Drives the 0 % → target transition
+     triggered by CircleProgressBar's useEffect on first paint. */
+  transition: width 600ms ease;
   min-width: 0;
+}
+
+/* Respect the user's motion preference (issue #401).
+   Skip the fill animation entirely — render at the final value instantly. */
+@media (prefers-reduced-motion: reduce) {
+  .fill {
+    transition: none;
+  }
 }
 
 /* ── Segment markers (one per cycle) ────────────────────────────────────────── */

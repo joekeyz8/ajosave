@@ -20,6 +20,10 @@ on:
         required: false
         default: "main"
 
+concurrency:
+  group: sbom-provenance
+  cancel-in-progress: true
+
 permissions:
   contents: write       # upload release assets
   id-token: write       # OIDC token for provenance signing

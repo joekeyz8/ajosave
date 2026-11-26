@@ -1,37 +1,29 @@
 /**
- * OTP send abuse controls (#109).
+ * OTP send abuse controls (#109, #423).
  *
- * Every OTP costs an SMS, so an unauthenticated "send code" endpoint is a target for SMS
- * pumping (running up the bill, often to premium-rate numbers) and for harassing a victim's
- * phone. On top of the existing per-route rate limit and the verify-side lockout, each send
- * must clear three limits, all kept in Redis:
+ * Per-IP and per-phone rate limiting for OTP sends:
+ *  1. Per-phone limit    — max 3 OTP sends per phone per 10 minutes
+ *  2. Per-IP limit       — max 10 OTP sends per IP per 10 minutes
  *
- *  1. Resend cooldown — one OTP per phone every {@link OTP_RESEND_COOLDOWN_SECONDS}.
- *  2. Daily cap       — at most {@link OTP_MAX_SENDS_PER_PHONE_PER_DAY} OTPs per phone per 24h.
- *  3. Per-IP cap      — at most {@link OTP_MAX_SENDS_PER_IP_PER_HOUR} OTPs per client IP per hour.
- *
- * A failed SMS delivery releases the cooldown so the user can retry straight away.
  * Redis errors propagate (fail closed) rather than letting sends through unmetered.
+ * Brute-force attempts (failed verifications) are tracked separately in lockout.ts.
  */
 import { getRedis } from "./redis";
 import logger from "./logger";
 
-export const OTP_RESEND_COOLDOWN_SECONDS = 60;
-export const OTP_MAX_SENDS_PER_PHONE_PER_DAY = 10;
-export const OTP_MAX_SENDS_PER_IP_PER_HOUR = 20;
+export const OTP_MAX_SENDS_PER_PHONE_PER_10MIN = 3;
+export const OTP_MAX_SENDS_PER_IP_PER_10MIN = 10;
 
-const DAY_SECONDS = 24 * 60 * 60;
-const HOUR_SECONDS = 60 * 60;
+const TEN_MINUTES_SECONDS = 10 * 60;
 
-export type OtpSendDenialReason = "cooldown" | "phone-daily-limit" | "ip-hourly-limit";
+export type OtpSendDenialReason = "phone-limit-10min" | "ip-limit-10min";
 
 export type OtpSendDecision =
   | { allowed: true }
   | { allowed: false; reason: OtpSendDenialReason; retryAfterSeconds: number; message: string };
 
-const cooldownKey = (phone: string) => `otp_cooldown:${phone}`;
-const dailyKey = (phone: string) => `otp_daily:${phone}`;
-const ipKey = (ip: string) => `otp_ip:${ip}`;
+const phoneKey = (phone: string) => `otp_send:phone:${phone}`;
+const ipKey = (ip: string) => `otp_send:ip:${ip}`;
 
 /** `+2348012345678` → `+234*******678`, so logs never carry a full number. */
 export function maskPhone(phone: string): string {
@@ -43,10 +35,6 @@ export function maskPhone(phone: string): string {
 export function getClientIp(headers: { get(name: string): string | null }): string {
   const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   return forwarded || headers.get("x-real-ip")?.trim() || "unknown";
-}
-
-function retryAfter(ttl: number, fallback: number): number {
-  return ttl > 0 ? ttl : fallback;
 }
 
 /** Increment a fixed-window counter, setting its expiry on first use. */
@@ -61,62 +49,55 @@ async function bump(
 }
 
 /**
- * Decide whether an OTP may be sent to `phone` from `ip`, recording the attempt. Call once per
- * send; on `allowed: true` the resend cooldown is already armed.
+ * Decide whether an OTP may be sent to `phone` from `ip`, recording the attempt.
+ * Call once per send request; enforces both per-phone and per-IP limits.
  */
 export async function checkOtpSendAllowed(phone: string, ip: string): Promise<OtpSendDecision> {
   const redis = await getRedis();
 
-  // 1. Resend cooldown — atomically claim it; a second request inside the window loses.
-  const claimed = await redis.set(cooldownKey(phone), "1", {
-    NX: true,
-    EX: OTP_RESEND_COOLDOWN_SECONDS,
-  });
-  if (!claimed) {
-    const wait = retryAfter(await redis.ttl(cooldownKey(phone)), OTP_RESEND_COOLDOWN_SECONDS);
-    logger.warn({ phone: maskPhone(phone), reason: "cooldown" }, "[otp] send denied");
+  // 1. Per-phone limit: max 3 OTP sends per phone per 10 minutes
+  const perPhone = await bump(redis, phoneKey(phone), TEN_MINUTES_SECONDS);
+  if (perPhone > OTP_MAX_SENDS_PER_PHONE_PER_10MIN) {
+    const wait = await redis.ttl(phoneKey(phone));
+    const retryAfter = wait > 0 ? wait : TEN_MINUTES_SECONDS;
+    logger.warn(
+      { phone: maskPhone(phone), reason: "phone-limit-10min", count: perPhone },
+      "[otp] send denied — phone limit exceeded"
+    );
     return {
       allowed: false,
-      reason: "cooldown",
-      retryAfterSeconds: wait,
-      message: `Please wait ${wait} seconds before requesting another code.`,
+      reason: "phone-limit-10min",
+      retryAfterSeconds: retryAfter,
+      message: `Too many OTP requests. Please wait ${retryAfter} seconds and try again.`,
     };
   }
 
-  // 2. Daily cap per phone number.
-  const perPhone = await bump(redis, dailyKey(phone), DAY_SECONDS);
-  if (perPhone > OTP_MAX_SENDS_PER_PHONE_PER_DAY) {
-    const wait = retryAfter(await redis.ttl(dailyKey(phone)), DAY_SECONDS);
-    logger.warn({ phone: maskPhone(phone), reason: "phone-daily-limit" }, "[otp] send denied");
-    return {
-      allowed: false,
-      reason: "phone-daily-limit",
-      retryAfterSeconds: wait,
-      message: "Too many codes requested for this number today. Please try again tomorrow.",
-    };
-  }
-
-  // 3. Per-IP cap. Skipped when the IP is unknown: a shared "unknown" bucket would let one
-  // unattributable client lock everyone else out.
+  // 2. Per-IP limit: max 10 OTP sends per IP per 10 minutes
+  // Skip if IP is unknown to avoid a shared bucket locking everyone out
   if (ip && ip !== "unknown") {
-    const perIp = await bump(redis, ipKey(ip), HOUR_SECONDS);
-    if (perIp > OTP_MAX_SENDS_PER_IP_PER_HOUR) {
-      const wait = retryAfter(await redis.ttl(ipKey(ip)), HOUR_SECONDS);
-      logger.warn({ ip, reason: "ip-hourly-limit" }, "[otp] send denied");
+    const perIp = await bump(redis, ipKey(ip), TEN_MINUTES_SECONDS);
+    if (perIp > OTP_MAX_SENDS_PER_IP_PER_10MIN) {
+      const wait = await redis.ttl(ipKey(ip));
+      const retryAfter = wait > 0 ? wait : TEN_MINUTES_SECONDS;
+      logger.warn(
+        { ip, reason: "ip-limit-10min", count: perIp },
+        "[otp] send denied — IP limit exceeded"
+      );
       return {
         allowed: false,
-        reason: "ip-hourly-limit",
-        retryAfterSeconds: wait,
-        message: "Too many codes requested from this network. Please try again later.",
+        reason: "ip-limit-10min",
+        retryAfterSeconds: retryAfter,
+        message: `Too many OTP requests from this network. Please wait ${retryAfter} seconds and try again.`,
       };
     }
   }
 
+  logger.info({ phone: maskPhone(phone), ip }, "[otp] send allowed");
   return { allowed: true };
 }
 
-/** Release the resend cooldown, e.g. after the SMS provider failed to deliver the code. */
+/** Release the OTP send counters (not currently used, kept for future cooldown feature). */
 export async function releaseOtpSendCooldown(phone: string): Promise<void> {
   const redis = await getRedis();
-  await redis.del(cooldownKey(phone));
+  await redis.del(phoneKey(phone));
 }

@@ -50,5 +50,54 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "back": "Back"
+  },
+  "pagination": {
+    "loading": "Loading more circles…",
+    "allLoaded": "You've seen all circles.",
+    "backToTop": "Back to top"
+  },
+  "circleCompletion": {
+    "heading": "Circle Complete! 🏆",
+    "sub": "Every member has been paid out. Great job staying committed!",
+    "totalSaved": "Total Saved",
+    "members": "Members",
+    "cyclesCompleted": "Cycles Completed",
+    "shareTwitter": "Share on X (Twitter)",
+    "shareWhatsApp": "Share on WhatsApp",
+    "startNew": "Start a New Circle",
+    "shareText": "🎉 Our savings circle \"{name}\" just completed on Ajosave! {count} members saved {symbol}{total} together. Join the next one at ajosave.app"
+  },
+  "dispute": {
+    "title": "Raise a Dispute",
+    "typeLabel": "Dispute Type",
+    "typeMissedPayout": "Missed Payout",
+    "typeWrongAmount": "Wrong Amount",
+    "typeOther": "Other",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Describe the issue in detail…",
+    "evidenceLabel": "Evidence (optional)",
+    "evidencePlaceholder": "Transaction IDs, screenshots descriptions, or any supporting information…",
+    "paystackLabel": "Paystack Reference (optional)",
+    "paystackPlaceholder": "e.g., 1234567890",
+    "submit": "Submit Dispute",
+    "errorFallback": "Failed to create dispute",
+    "errorGeneric": "An error occurred"
+  },
+  "walletMismatch": {
+    "title": "Wallet mismatch detected",
+    "description": "The connected wallet does not match the Stellar address registered to your account. Switch wallets or disconnect before performing any transactions.",
+    "expected": "Expected:",
+    "connected": "Connected:",
+    "addressComparison": "Address comparison",
+    "switchAriaLabel": "Switch to the expected wallet",
+    "disconnectAriaLabel": "Disconnect the current wallet",
+    "switchButton": "Switch wallet",
+    "disconnectButton": "Disconnect",
+    "resolvedMessage": "Wallet switched successfully — you're now using the correct account."
+  },
+  "offline": {
+    "heading": "You're offline",
+    "message": "Check your internet connection and try again. Cached pages like your dashboard and circles are still available.",
+    "retry": "Retry"
   }
 }

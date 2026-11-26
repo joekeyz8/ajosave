@@ -5,6 +5,7 @@ import { getRedis } from "@/lib/redis";
 import { getLockoutStatus, recordFailure, resetLockout } from "@/lib/lockout";
 import { otpMatches } from "@/lib/otp-code";
 import { query } from "@/lib/db";
+import { getClientIp } from "@/lib/otp-abuse";
 import type { ApiResponse } from "@/types";
 
 interface VerifyOtpResponse {
@@ -114,8 +115,8 @@ export const POST = withErrorHandler(withSanitizedBody(async (req: NextRequest) 
     const storedOtp = await redis.get(`otp:${phone}`);
 
     if (!otpMatches(storedOtp, otp)) {
-      // Record failure and get updated status
-      const updatedStatus = await recordFailure(phone);
+      // Record failure and get updated status (pass IP for audit log)
+      const updatedStatus = await recordFailure(phone, { ipAddress: getClientIp(req.headers) });
 
       // If newly locked, return 423; otherwise 401
       const statusCode = updatedStatus.isLocked ? 423 : 401;
@@ -140,25 +141,37 @@ export const POST = withErrorHandler(withSanitizedBody(async (req: NextRequest) 
     await resetLockout(phone);
     await redis.del(`otp:${phone}`);
 
-    // Load or create user
+    // Load or create user — look up by HMAC blind index (phone column holds ciphertext)
+    const phoneHash = hmacIndex(phone);
     let user = await query<{ id: string; phone: string; display_name: string; role: string }>(
-      "SELECT id, phone, display_name, role FROM users WHERE phone = $1",
-      [phone]
+      "SELECT id, phone, display_name, role FROM users WHERE phone_hash = $1",
+      [phoneHash]
     );
 
     if (user.rows.length === 0) {
-      // Create user on first successful OTP verification
+      // Create user on first successful OTP verification — store encrypted phone
+      const { encrypt } = await import("@/lib/encryption");
+      const encryptedPhone = encrypt(phone);
       const result = await query<{ id: string; phone: string; display_name: string; role: string }>(
-        `INSERT INTO users (id, phone, display_name, role, reputation_score, created_at)
-         VALUES (gen_random_uuid(), $1, 'Ajosave User', 'user', 0, NOW())
-         ON CONFLICT (phone) DO UPDATE SET phone = EXCLUDED.phone
+        `INSERT INTO users (id, phone, phone_hash, display_name, role, reputation_score, created_at)
+         VALUES (gen_random_uuid(), $1, $2, 'Ajosave User', 'user', 0, NOW())
+         ON CONFLICT (phone_hash) DO UPDATE SET phone_hash = EXCLUDED.phone_hash
          RETURNING id, phone, display_name, role`,
-        [phone]
+        [encryptedPhone, phoneHash]
       );
       user = result;
     }
 
     const userData = user.rows[0];
+    // Decrypt phone for the response
+    let decryptedPhone = phone;
+    try { decryptedPhone = decrypt(userData.phone); } catch { /* use request value */ }
+
+    // Audit the successful login
+    await logAuditAction(userData.id, "OTHER", "USER", userData.id, {
+      details: { event: "otp_verified" },
+      ipAddress: getClientIp(req.headers),
+    }).catch(() => {});
 
     return NextResponse.json<ApiResponse<VerifyOtpResponse>>(
       {
@@ -167,7 +180,7 @@ export const POST = withErrorHandler(withSanitizedBody(async (req: NextRequest) 
           message: "OTP verified successfully",
           user: {
             id: userData.id,
-            phone: userData.phone,
+            phone: decryptedPhone,
             displayName: userData.display_name,
             role: userData.role,
           },

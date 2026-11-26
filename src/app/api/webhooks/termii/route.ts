@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withErrorHandler } from "@/server/middleware";
+import { serverConfig } from "@/server/config";
 import { getDb } from "@/lib/db";
 import { sendEmail } from "@/lib/email";
 import logger from "@/lib/logger";
@@ -10,11 +11,20 @@ const DELIVERED_STATUS = "delivered";
 
 export const POST = withErrorHandler(async (req: NextRequest) => {
   const body = await req.json();
-  const { message_id, status, phone_number } = body as {
+  const { message_id, status, phone_number, api_key } = body as {
     message_id?: string;
     status?: string;
     phone_number?: string;
+    api_key?: string;
   };
+
+  // Termii includes the api_key in delivery report payloads.
+  // Reject requests that do not carry the correct key so arbitrary callers
+  // cannot spoof delivery confirmations and suppress SMS retries.
+  if (!api_key || api_key !== serverConfig.termii.apiKey) {
+    logger.warn({ messageId: message_id }, "termii-webhook: invalid api_key");
+    return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+  }
 
   if (!message_id || !status) {
     return NextResponse.json({ success: false, error: "Missing fields" }, { status: 400 });

@@ -1,0 +1,215 @@
+{
+  "dashboard": {
+    "title": "Ajosave Canary Deployment Metrics",
+    "tags": ["ajosave", "canary", "deployment"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Error Rate - Production vs Canary",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(ajosave_http_requests_total{status=~\"5..\"}[5m]) / rate(ajosave_http_requests_total[5m]) * 100",
+            "legendFormat": "Production Error Rate",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(ajosave_http_requests_total{deployment=\"canary\",status=~\"5..\"}[5m]) / rate(ajosave_http_requests_total{deployment=\"canary\"}[5m]) * 100",
+            "legendFormat": "Canary Error Rate",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "percent", "label": "Error Rate", "min": 0},
+          {"format": "short"}
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {"params": [1.0], "type": "gt"},
+              "operator": {"type": "and"},
+              "query": {"params": ["B", "5m", "now"]},
+              "reducer": {"params": [], "type": "avg"},
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "1m",
+          "handler": 1,
+          "name": "Canary Error Rate Alert",
+          "noDataState": "no_data",
+          "notifications": []
+        }
+      },
+      {
+        "id": 2,
+        "title": "Request Latency - P95",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ajosave_http_request_duration_seconds_bucket[5m]))",
+            "legendFormat": "Production P95",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(ajosave_http_request_duration_seconds_bucket{deployment=\"canary\"}[5m]))",
+            "legendFormat": "Canary P95",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Latency (seconds)", "min": 0},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Request Rate - RPS",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(ajosave_http_requests_total[1m])",
+            "legendFormat": "Production RPS",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(ajosave_http_requests_total{deployment=\"canary\"}[1m])",
+            "legendFormat": "Canary RPS",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "reqps", "label": "Requests/sec", "min": 0},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Traffic Split Percentage",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 8, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "ajosave_canary_traffic_percentage",
+            "legendFormat": "Traffic to Canary",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "value",
+          "graphMode": "area",
+          "orientation": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "Canary Status",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 8, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "ajosave_canary_status",
+            "legendFormat": "Status",
+            "refId": "A"
+          }
+        ],
+        "options": {
+          "colorMode": "background",
+          "graphMode": "none"
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "options": {
+              "0": {"color": "red", "text": "Rollback"},
+              "1": {"color": "green", "text": "Promoted"},
+              "2": {"color": "yellow", "text": "In Progress"}
+            }
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Error Rate by Status Code",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "rate(ajosave_http_requests_total{deployment=\"canary\",status=~\"5..\"}[5m]) by (status)",
+            "legendFormat": "{{status}}",
+            "refId": "A"
+          }
+        ],
+        "yaxes": [
+          {"format": "reqps", "label": "Requests/sec", "min": 0},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Database Query Latency",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 8},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(ajosave_db_query_duration_seconds_bucket[5m]))",
+            "legendFormat": "Production DB P95",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(ajosave_db_query_duration_seconds_bucket{deployment=\"canary\"}[5m]))",
+            "legendFormat": "Canary DB P95",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "label": "Latency (seconds)", "min": 0},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Canary Deployment Timeline",
+        "type": "table",
+        "gridPos": {"x": 0, "y": 24, "w": 24, "h": 8},
+        "targets": [
+          {
+            "expr": "ajosave_canary_deployments",
+            "legendFormat": "",
+            "refId": "A",
+            "format": "table"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {"Time": true, "__name__": true},
+              "indexByName": {},
+              "renameByName": {
+                "commit": "Commit SHA",
+                "start_time": "Start Time",
+                "end_time": "End Time",
+                "duration": "Duration (min)",
+                "error_rate": "Error Rate (%)",
+                "status": "Status"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

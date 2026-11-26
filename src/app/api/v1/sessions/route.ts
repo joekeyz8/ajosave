@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getUserSessions, hashToken } from "@/lib/sessions";
+import { withRouteRateLimit } from "@/server/middleware";
 import type { ApiResponse } from "@/types";
 import type { SessionInfo } from "@/lib/sessions";
 import { getToken } from "next-auth/jwt";
@@ -10,9 +11,9 @@ import { getToken } from "next-auth/jwt";
  * GET /api/v1/sessions
  * Get all active sessions for the current user
  */
-export async function GET(
+export const GET = withRouteRateLimit(async (
   req: NextRequest
-): Promise<NextResponse<ApiResponse<{ sessions: SessionInfo[] }>>> {
+): Promise<NextResponse<ApiResponse<{ sessions: SessionInfo[] }>>> => {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
     return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
@@ -43,4 +44,4 @@ export async function GET(
       { status: 500 }
     );
   }
-}
+});

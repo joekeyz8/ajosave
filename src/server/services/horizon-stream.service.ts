@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 /**
  * Stellar Horizon streaming service
  * Monitors incoming USDC payments in real-time using Server-Sent Events (SSE)
@@ -20,14 +21,14 @@ let streamCloser: (() => void) | null = null;
  */
 export async function startHorizonStream(onPayment?: PaymentHandler): Promise<void> {
   if (streamCloser) {
-    console.warn("[horizon-stream] Stream already running");
+    logger.warn("[horizon-stream] Stream already running");
     return;
   }
 
   const keypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
   const platformAccount = keypair.publicKey();
 
-  console.log(`[horizon-stream] Starting payment stream for ${platformAccount}`);
+  logger.info(`[horizon-stream] Starting payment stream for ${platformAccount}`);
 
   // Stream payments to the platform account
   const paymentsStream = (horizonServer
@@ -54,7 +55,7 @@ export async function startHorizonStream(onPayment?: PaymentHandler): Promise<vo
           // Only process incoming payments (to platform account)
           if (paymentOp.to !== platformAccount) return;
 
-          console.log(`[horizon-stream] Received USDC payment:`, {
+          logger.info(`[horizon-stream] Received USDC payment:`, {
             from: paymentOp.from,
             amount: paymentOp.amount,
             txHash: paymentOp.transaction_hash,
@@ -68,14 +69,14 @@ export async function startHorizonStream(onPayment?: PaymentHandler): Promise<vo
           // Auto-confirm contribution if this payment matches a pending contribution
           await autoConfirmContribution(paymentOp);
         } catch (error) {
-          console.error("[horizon-stream] Error processing payment:", error);
+          logger.error("[horizon-stream] Error processing payment:", error);
         }
       },
       onerror: (error: any) => {
-        console.error("[horizon-stream] Stream error:", error);
+        logger.error("[horizon-stream] Stream error:", error);
         // Attempt to reconnect after 5 seconds
         setTimeout(() => {
-          console.log("[horizon-stream] Attempting to reconnect...");
+          logger.info("[horizon-stream] Attempting to reconnect...");
           stopHorizonStream();
           startHorizonStream(onPayment);
         }, 5000);
@@ -90,7 +91,7 @@ export async function startHorizonStream(onPayment?: PaymentHandler): Promise<vo
  */
 export function stopHorizonStream(): void {
   if (streamCloser) {
-    console.log("[horizon-stream] Stopping payment stream");
+    logger.info("[horizon-stream] Stopping payment stream");
     streamCloser();
     streamCloser = null;
   }
@@ -128,7 +129,7 @@ async function autoConfirmContribution(payment: Horizon.ServerApi.PaymentOperati
   );
 
   if (rows.length === 0) {
-    console.log(
+    logger.info(
       `[horizon-stream] No matching pending contribution found for ${amountUsdc} USDC from ${senderAddress}`
     );
     return;
@@ -148,7 +149,7 @@ async function autoConfirmContribution(payment: Horizon.ServerApi.PaymentOperati
   const { incrementReputationOnContribution } = await import("./reputation.service");
   await incrementReputationOnContribution(contribution.user_id);
 
-  console.log(`[horizon-stream] Auto-confirmed contribution ${contribution.id}`);
+  logger.info(`[horizon-stream] Auto-confirmed contribution ${contribution.id}`);
 
   // Emit event for real-time updates (WebSocket broadcast)
   await broadcastContributionConfirmed(contribution.circle_id, contribution.member_id, txHash);

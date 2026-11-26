@@ -4,7 +4,11 @@ on:
   pull_request:
     branches: [main, develop]
 
-permissions:
+concurrency:
+  group: lighthouse-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:  # least-privilege CI tokens (#108)
   contents: read
 
 jobs:

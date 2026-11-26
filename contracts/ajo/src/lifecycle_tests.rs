@@ -9,7 +9,7 @@
 //!   I4. every member receives exactly one pot per circle
 //!   I5. once completed, the contract holds no funds and rejects payouts
 
-use crate::{AjoContract, AjoContractClient, MAX_CYCLE_INTERVAL_SECS};
+use crate::{AjoContract, AjoContractClient, Error, MAX_CYCLE_INTERVAL_SECS, MIN_REALISTIC_CYCLE_INTERVAL_SECS};
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
     token::{Client as TokenClient, StellarAssetClient},
@@ -228,29 +228,35 @@ fn init_rejects_reinitialization() {
 // ─── #48 interval overflow guards ───────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "cycle_interval_secs out of range")]
 fn init_rejects_zero_interval() {
     let (_, admin, token_id, _, client) = fresh(2);
-    client.initialize(&admin, &token_id, &CONTRIBUTION, &2, &0);
+    assert_eq!(
+        client.try_initialize(&admin, &token_id, &CONTRIBUTION, &2, &0),
+        Err(Ok(Error::InvalidCycleInterval))
+    );
 }
 
 #[test]
-#[should_panic(expected = "cycle_interval_secs out of range")]
 fn init_rejects_interval_above_max() {
     let (_, admin, token_id, _, client) = fresh(2);
-    client.initialize(&admin, &token_id, &CONTRIBUTION, &2, &(MAX_CYCLE_INTERVAL_SECS + 1));
+    assert_eq!(
+        client.try_initialize(&admin, &token_id, &CONTRIBUTION, &2, &(MAX_CYCLE_INTERVAL_SECS + 1)),
+        Err(Ok(Error::InvalidCycleInterval))
+    );
 }
 
 #[test]
-#[should_panic(expected = "cycle_interval_secs out of range")]
 fn init_rejects_u64_max_interval() {
     let (_, admin, token_id, _, client) = fresh(2);
-    client.initialize(&admin, &token_id, &CONTRIBUTION, &2, &u64::MAX);
+    assert_eq!(
+        client.try_initialize(&admin, &token_id, &CONTRIBUTION, &2, &u64::MAX),
+        Err(Ok(Error::InvalidCycleInterval))
+    );
 }
 
 #[test]
 fn init_accepts_interval_bounds() {
-    for interval in [1u64, MAX_CYCLE_INTERVAL_SECS] {
+    for interval in [MIN_REALISTIC_CYCLE_INTERVAL_SECS, MAX_CYCLE_INTERVAL_SECS] {
         let (_, admin, token_id, _, client) = fresh(2);
         client.initialize(&admin, &token_id, &CONTRIBUTION, &2, &interval);
     }

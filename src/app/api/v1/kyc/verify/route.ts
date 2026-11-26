@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { initiateKyc } from "@/lib/kyc";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import type { ApiResponse } from "@/types";
 
 /**
@@ -10,7 +10,7 @@ import type { ApiResponse } from "@/types";
  * Initiates a KYC session for the authenticated user.
  * Returns a Smile Identity web-token the client passes to the widget SDK.
  */
-export const POST = withErrorHandler(async () => {
+export const POST = withRouteRateLimit(withErrorHandler(async () => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -26,4 +26,4 @@ export const POST = withErrorHandler(async () => {
     success: true,
     data: { token },
   });
-});
+}));

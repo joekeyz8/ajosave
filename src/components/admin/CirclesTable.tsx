@@ -5,7 +5,8 @@ import type { AdminCircleRow } from "@/server/services/admin.service";
 import { CircleStatusBadge } from "@/components/ui/CircleStatusBadge";
 import { Button } from "@/components/ui/Button";
 import { CopyableText } from "@/components/ui/CopyableText";
-import { format } from "date-fns";
+import { formatDate } from "@/lib/date-formatting";
+import { useLocale } from "next-intl";
 import { getCurrencySymbol, SupportedCurrency } from "@/lib/currency";
 import { useKeyboardTableNav } from "@/hooks/useKeyboardTableNav";
 import styles from "./admin.module.css";
@@ -69,6 +70,7 @@ function sortCircles(
 }
 
 export function CirclesTable({ circles }: CirclesTableProps) {
+  const locale = useLocale();
   const tableRef = useKeyboardTableNav<HTMLTableElement>();
   const dialogId = useId();
 
@@ -534,10 +536,7 @@ export function CirclesTable({ circles }: CirclesTableProps) {
                     </td>
                     <td>
                       {circle.nextPayoutAt
-                        ? format(
-                            new Date(circle.nextPayoutAt),
-                            "MMM d, yyyy HH:mm"
-                          )
+                        ? formatDate(new Date(circle.nextPayoutAt), locale, { hour: "2-digit", minute: "2-digit" })
                         : "—"}
                     </td>
                     <td>

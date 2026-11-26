@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import { query } from "@/lib/db";
 
 /**
@@ -86,7 +87,7 @@ export interface AuditLogResponse {
  * Audit logs are append-only and immutable.
  *
  * Privileged actions (see PRIVILEGED_ACTIONS) are automatically flagged
- * and emitted as console.warn so they surface in log-aggregation alerts.
+ * and emitted as logger.warn so they surface in log-aggregation alerts.
  */
 export async function logAuditAction(
   actorId: string,
@@ -102,7 +103,7 @@ export async function logAuditAction(
   const privilege: AuditPrivilege = PRIVILEGED_ACTIONS.has(action) ? "PRIVILEGED" : "STANDARD";
 
   if (privilege === "PRIVILEGED") {
-    console.warn(
+    logger.warn(
       `[audit] PRIVILEGED EVENT actor=${actorId} action=${action} target=${targetType}:${targetId}`,
       options?.details ?? {}
     );
@@ -130,6 +131,10 @@ export async function logAuditAction(
 /**
  * Retrieves audit logs with optional filtering.
  */
+/* eslint-disable local/no-query-interpolation --
+ * getAuditLogs and getAuditLogCount build WHERE clauses from a code-controlled
+ * conditions array using only $N placeholders; all values are bound via params.
+ * This is the same safe dynamic-query pattern as pagination.ts. */
 export async function getAuditLogs(options?: {
   actorId?: string;
   action?: AuditAction;
@@ -297,6 +302,8 @@ export async function getAuditLogCount(options?: {
 
   return rows[0]?.count || 0;
 }
+
+/* eslint-enable local/no-query-interpolation */
 
 /**
  * Returns only PRIVILEGED audit events, most recent first.

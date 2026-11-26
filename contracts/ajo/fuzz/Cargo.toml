@@ -22,6 +22,18 @@ path = "fuzz_targets/fuzz_payout.rs"
 test = false
 doc = false
 
+[[bin]]
+name = "fuzz_contribute_payout"
+path = "fuzz_targets/fuzz_contribute_payout.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_join_payout"
+path = "fuzz_targets/fuzz_join_payout.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
 ajo = { path = ".." }

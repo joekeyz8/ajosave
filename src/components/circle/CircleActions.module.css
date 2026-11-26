@@ -1,0 +1,29 @@
+/**
+ * CircleActions — mobile tap-target overrides
+ *
+ * WCAG 2.5.5 requires interactive elements to be at least 44×44 px.
+ * The Button component renders with size="sm" which keeps the visual text
+ * small; we add extra padding here to extend the hit area without changing
+ * the visible icon or label size on desktop.
+ *
+ * On desktop (≥768 px) the standard btn--sm sizing is fine — the extra
+ * padding is only applied on narrower viewports.
+ */
+
+.actions {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Ensure every button descendant meets the 44 × 44 px touch target on mobile */
+@media (max-width: 767px) {
+  .actions :global(.btn) {
+    min-height: 44px;
+    min-width: 44px;
+    /* Extra horizontal padding inflates the hit area; the text stays the same size */
+    padding-left: var(--space-5);
+    padding-right: var(--space-5);
+  }
+}

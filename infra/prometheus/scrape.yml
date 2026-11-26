@@ -1,0 +1,12 @@
+# Example Prometheus scrape config for /api/metrics (issue #471).
+scrape_configs:
+  - job_name: ajosave
+    metrics_path: /api/metrics
+    scheme: https
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/ajosave-metrics-token
+    static_configs:
+      - targets: ["ajosave.app"]
+rule_files:
+  - alerts.yml

@@ -10,6 +10,7 @@
 
 import { query } from "@/lib/db";
 import logger from "@/lib/logger";
+import { outboundPolicy, safeFetch } from "@/lib/ssrf";
 
 interface HorizonLedgerResponse {
   hash: string;
@@ -18,6 +19,12 @@ interface HorizonLedgerResponse {
 }
 
 const HORIZON_URL = process.env.STELLAR_HORIZON_URL ?? "https://horizon.stellar.org";
+
+/** Shared SSRF policy for Horizon calls — allow only the configured hostname. */
+function horizonPolicy() {
+  const url = new URL(HORIZON_URL);
+  return outboundPolicy({ allowedHosts: [url.hostname] });
+}
 
 /**
  * Fetch the most recent closed ledger hash from Horizon.
@@ -28,7 +35,11 @@ export async function fetchLatestLedgerHash(): Promise<{
   ledgerSequence: number;
 }> {
   try {
-    const response = await fetch(`${HORIZON_URL}/ledgers?order=desc&limit=1`);
+    const response = await safeFetch(
+      `${HORIZON_URL}/ledgers?order=desc&limit=1`,
+      {},
+      horizonPolicy()
+    );
     if (!response.ok) {
       throw new Error(`Horizon returned ${response.status}`);
     }

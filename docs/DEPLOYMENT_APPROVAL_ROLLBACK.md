@@ -70,3 +70,139 @@ on-chain contract state or a bad contract upgrade — Soroban contracts are
 immutable once deployed except via their own upgrade mechanism. Rolling
 back the app to point at a previously-known-good `STELLAR_AJO_CONTRACT_ID`
 is a separate, manual decision and is out of scope for this workflow.
+
+## Canary Deployments
+
+Canary deployments allow you to shift a small percentage of traffic to a new
+version before rolling it out to 100% of users. This reduces the blast radius
+of bad deploys by catching issues early.
+
+### How it works
+
+The `canary-deploy.yml` workflow implements a canary deployment strategy:
+
+1. **Deploy to Preview**: The new version is deployed as a Vercel preview deployment
+2. **Traffic Split**: Cloudflare Workers route a configurable percentage (default 5%)
+   of traffic to the canary, with the remainder going to production
+3. **Observation Period**: The canary runs for a configurable duration (default 10 minutes)
+4. **Metrics Monitoring**: Error rate and latency are monitored via Sentry and Prometheus
+5. **Decision**: If error rate exceeds threshold (default 1%), automatic rollback occurs.
+   Otherwise, the canary is promoted to full production.
+
+### Prerequisites
+
+Canary deployments require:
+
+1. **Cloudflare Workers** for traffic splitting:
+   - Create a Cloudflare Worker named `ajosave-canary-router`
+   - Configure it to route traffic between production and canary URLs
+   - Add the following secrets to GitHub:
+     - `CLOUDFLARE_ACCOUNT_ID`: Your Cloudflare account ID
+     - `CLOUDFLARE_API_TOKEN`: API token with Workers script edit permissions
+
+2. **Cloudflare Worker Script** (example):
+   ```javascript
+   export default {
+     async fetch(request, env) {
+       const canaryUrl = env.CANARY_URL;
+       const productionUrl = env.PRODUCTION_URL;
+       const trafficPercentage = parseInt(env.TRAFFIC_PERCENTAGE || '5');
+       
+       const random = Math.random() * 100;
+       const targetUrl = random < trafficPercentage ? canaryUrl : productionUrl;
+       
+       const url = new URL(request.url);
+       const target = new URL(targetUrl);
+       url.searchParams.forEach((value, key) => target.searchParams.set(key, value));
+       
+       const modifiedRequest = new Request(target, {
+         method: request.method,
+         headers: request.headers,
+         body: request.body,
+         redirect: 'manual'
+       });
+       
+       // Add deployment header for metrics
+       modifiedRequest.headers.set('X-Deployment', random < trafficPercentage ? 'canary' : 'production');
+       
+       return fetch(modifiedRequest);
+     }
+   };
+   ```
+
+3. **Grafana Dashboard** for canary metrics:
+   - Import `docs/grafana-canary-dashboard.json` into your Grafana instance
+   - Configure Prometheus data source to collect metrics from your application
+   - Required metrics (exposed by the application):
+     - `ajosave_http_requests_total`: Total HTTP requests (with `status`, `deployment` labels)
+     - `ajosave_http_request_duration_seconds_bucket`: Request latency histogram
+     - `ajosave_db_query_duration_seconds_bucket`: Database query latency histogram
+     - `ajosave_canary_traffic_percentage`: Current traffic split percentage
+     - `ajosave_canary_status`: Canary deployment status (0=rollback, 1=promoted, 2=in-progress)
+     - `ajosave_canary_deployments`: Canary deployment history table
+
+### Running a canary deployment
+
+1. Go to **Actions → Canary Deploy to Production**
+2. Click **Run workflow**
+3. Configure parameters:
+   - `ref`: Git ref to deploy (default: `main`)
+   - `traffic_percentage`: Percentage of traffic to canary (default: `5`)
+   - `duration_minutes`: Observation duration (default: `10`)
+   - `error_threshold`: Error rate threshold for rollback (default: `1.0`)
+4. Click **Run workflow**
+
+The workflow will:
+- Deploy the canary to a Vercel preview URL
+- Configure Cloudflare Worker to split traffic
+- Monitor metrics for the specified duration
+- Automatically promote or rollback based on error rate
+- Remove traffic split configuration after decision
+
+### Monitoring canary deployments
+
+Monitor canary deployments in Grafana using the **Ajosave Canary Deployment Metrics** dashboard:
+
+- **Error Rate - Production vs Canary**: Compare error rates between versions
+- **Request Latency - P95**: Compare latency percentiles
+- **Request Rate - RPS**: Compare request throughput
+- **Traffic Split Percentage**: Current traffic allocation
+- **Canary Status**: Current deployment status
+- **Error Rate by Status Code**: Breakdown of error types
+- **Database Query Latency**: Database performance comparison
+- **Canary Deployment Timeline**: History of canary deployments
+
+The dashboard includes an alert that triggers when canary error rate exceeds 1%.
+
+### Automatic rollback
+
+If the error rate exceeds the threshold during the observation period:
+
+1. The workflow automatically removes the traffic split
+2. Traffic is restored 100% to the previous production version
+3. A GitHub issue is created with details:
+   - Error rate observed
+   - Threshold value
+   - Commit SHA
+   - Link to workflow run logs
+4. The canary preview deployment remains available for debugging
+
+### Manual intervention
+
+You can manually trigger a rollback at any time:
+
+1. Run the **Rollback Production** workflow
+2. This will redeploy the previous successful version
+3. The canary traffic split will be removed as part of the rollback
+
+### Canary vs Full Production Deploy
+
+- **Canary Deploy** (`canary-deploy.yml`): Use for most production releases
+  - 5% traffic initially, monitors for 10 minutes
+  - Automatic rollback on high error rate
+  - Reduces blast radius of bad deploys
+
+- **Full Production Deploy** (`production-deploy.yml`): Use for emergency fixes
+  - Immediate 100% traffic shift
+  - Requires manual approval
+  - Bypasses canary observation period

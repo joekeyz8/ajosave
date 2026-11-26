@@ -1,31 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cleanupExpiredSessions } from "@/lib/sessions";
-import { verifyCronAuth } from "@/lib/cron-auth";
+import { verifyCronSecret } from "@/lib/cron-auth";
 import type { ApiResponse } from "@/types";
 
 /**
  * POST /api/v1/cron/cleanup-sessions
- * Clean up expired sessions from the database
- * Should be called periodically (e.g., daily)
+ * Removes expired session records from the database.
+ * Should be called periodically (e.g. daily) via a scheduled cron job.
+ *
+ * Authentication: HMAC-SHA256 signed request via verifyCronSecret.
+ * See src/lib/cron-auth.ts for signing instructions.
  */
 export async function POST(
   req: NextRequest
 ): Promise<NextResponse<ApiResponse<{ deletedCount: number }>>> {
-  // Verify cron authentication
-  const authError = verifyCronAuth(req);
-  if (authError) {
-    return authError;
-  }
+  const unauth = await verifyCronSecret(req);
+  if (unauth) return unauth as NextResponse<ApiResponse<{ deletedCount: number }>>;
 
   try {
     const deletedCount = await cleanupExpiredSessions();
-
-    console.log(`[cron] Cleaned up ${deletedCount} expired sessions`);
-
-    return NextResponse.json({
-      success: true,
-      data: { deletedCount },
-    });
+    return NextResponse.json({ success: true, data: { deletedCount } });
   } catch (error) {
     console.error("[cron] Error cleaning up sessions:", error);
     return NextResponse.json(

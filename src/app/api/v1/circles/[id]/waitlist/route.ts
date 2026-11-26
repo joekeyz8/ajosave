@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import {
   addToWaitlist,
   removeFromWaitlist,
@@ -9,7 +9,7 @@ import {
 } from "@/server/services/waitlist.service";
 import type { ApiResponse } from "@/types";
 
-export const GET = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
+export const GET = withRouteRateLimit(withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
   const session = await getServerSession(authOptions);
   const user = session?.user as { id: string } | undefined;
   if (!user?.id) {
@@ -26,9 +26,9 @@ export const GET = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
     success: true,
     data: status,
   });
-});
+}));
 
-export const POST = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
+export const POST = withRouteRateLimit(withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
   const session = await getServerSession(authOptions);
   const user = session?.user as { id: string } | undefined;
   if (!user?.id) {
@@ -45,9 +45,9 @@ export const POST = withErrorHandler(async (_req: NextRequest, ctx: unknown) => 
     success: true,
     data: status,
   });
-});
+}));
 
-export const DELETE = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
+export const DELETE = withRouteRateLimit(withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
   const session = await getServerSession(authOptions);
   const user = session?.user as { id: string } | undefined;
   if (!user?.id) {
@@ -64,4 +64,4 @@ export const DELETE = withErrorHandler(async (_req: NextRequest, ctx: unknown) =
     success: true,
     data: status,
   });
-});
+}));

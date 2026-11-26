@@ -64,6 +64,43 @@ mod integration {
 
     // ─── Tests ────────────────────────────────────────────────────────────────
 
+    /// get_circle_state reflects each lifecycle transition (issue #460).
+    #[test]
+    fn test_get_circle_state_lifecycle() {
+        let f = setup_fixture(2);
+        let Fixture { env, admin, members, token, client, contribution, interval, .. } = &f;
+        let sym = |s: &str| soroban_sdk::Symbol::new(env, s);
+
+        let s = client.get_circle_state();
+        assert_eq!(s.status, sym("forming"));
+        assert_eq!((s.current_cycle, s.total_members, s.joined_members), (0, 2, 0));
+        assert_eq!(s.admin, *admin);
+        assert_eq!(s.token, token.address);
+
+        client.join(&members.get(0).unwrap());
+        assert_eq!(client.get_circle_state().joined_members, 1);
+        client.join(&members.get(1).unwrap());
+        let s = client.get_circle_state();
+        assert_eq!(s.status, sym("active"));
+        assert_eq!((s.current_cycle, s.joined_members), (1, 2));
+        let (_, _, next_payout, _, _) = client.get_state();
+        assert_eq!(s.next_payout_at, next_payout);
+
+        for cycle in 1..=2u32 {
+            for m in members.iter() {
+                client.contribute(&m, contribution);
+            }
+            env.ledger().with_mut(|l| l.timestamp += interval + 1);
+            client.payout();
+            let s = client.get_circle_state();
+            if cycle < 2 {
+                assert_eq!((s.status, s.current_cycle), (sym("active"), 2));
+            } else {
+                assert_eq!(s.status, sym("completed"));
+            }
+        }
+    }
+
     /// Full lifecycle: initialize → join all → contribute each cycle → payout × N → complete
     #[test]
     fn test_full_lifecycle() {
@@ -390,7 +427,7 @@ let (cycle, max, _, completed, _) = client.get_state();
     fn test_paused_blocks_contribute() {
         let f = setup_fixture(2);
         for m in f.members.iter() { f.client.join(m); }
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         assert_eq!(
             f.client.try_contribute(&f.members.get(0).unwrap(), &f.contribution),
             Err(Ok(crate::Error::CirclePaused))
@@ -401,7 +438,7 @@ let (cycle, max, _, completed, _) = client.get_state();
     #[test]
     fn test_paused_blocks_join() {
         let f = setup_fixture(2);
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         assert_eq!(
             f.client.try_join(&f.members.get(0).unwrap()),
             Err(Ok(crate::Error::CirclePaused))
@@ -420,7 +457,7 @@ let (cycle, max, _, completed, _) = client.get_state();
         let f = setup_fixture(2);
         for m in f.members.iter() { f.client.join(m); }
         f.env.ledger().with_mut(|l| l.timestamp = f.interval + 1);
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         assert_eq!(f.client.try_payout(), Err(Ok(crate::Error::CirclePaused)));
     }
 
@@ -432,7 +469,7 @@ let (cycle, max, _, completed, _) = client.get_state();
         for m in f.members.iter() { f.client.join(m); }
         f.env.ledger().with_mut(|l| l.timestamp = f.interval + 1);
 
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         f.client.unpause();
 
         f.client.payout(); // must succeed now that the pause has been lifted
@@ -458,7 +495,7 @@ let (cycle, max, _, completed, _) = client.get_state();
         f.client.payout();
 
         let member = f.members.get(0).unwrap();
-        f.client.pause();
+        f.client.pause(&vec![&f.env, f.admin.clone()]);
         assert_eq!(f.client.try_contribute(&member, &f.contribution), Err(Ok(crate::Error::CirclePaused)));
         f.client.unpause();
         f.client.contribute(&member, &f.contribution);
@@ -621,6 +658,17 @@ let (cycle, max, _, completed, _) = client.get_state();
         assert_eq!(cycle_before, cycle_after, "cycle should be unchanged after upgrade");
         assert_eq!(max_before, max_after, "max_members should be unchanged after upgrade");
         assert_eq!(completed_before, completed_after, "completed flag should be unchanged after upgrade");
+    }
+
+    /// propose_upgrade (#466): rejects a WASM hash that was never uploaded,
+    /// so no timelock is started.
+    #[test]
+    fn test_propose_upgrade_rejects_missing_wasm() {
+        use soroban_sdk::BytesN;
+
+        let f = setup_fixture(2);
+        let missing_hash = BytesN::from_array(&f.env, &[9u8; 32]);
+        assert!(f.client.try_propose_upgrade(&missing_hash).is_err());
     }
 
     /// Multi-member scenario: 5-member circle completes full rotation
@@ -932,5 +980,67 @@ let (cycle, max, _, completed, _) = client.get_state();
         f.client.join(&f.members.get(0).unwrap());
         f.env.ledger().with_mut(|l| l.timestamp = f.interval + 1);
         f.client.payout();
+    }
+
+    /// Issue #443: a pending upgrade freezes `propose_admin`, so a rotated-in
+    /// admin cannot be used to bypass the upgrade timelock.
+    #[test]
+    #[should_panic(expected = "admin change blocked while upgrade is pending")]
+    fn test_admin_rotation_blocked_during_pending_upgrade() {
+        use soroban_sdk::BytesN;
+
+        let f = setup_fixture(2);
+        f.client.propose_upgrade(&BytesN::from_array(&f.env, &[9u8; 32]));
+        f.client.propose_admin(&Address::generate(&f.env));
+    }
+
+    /// Issue #443: an admin proposed *before* the upgrade cannot accept the
+    /// role while the upgrade is pending.
+    #[test]
+    #[should_panic(expected = "admin change blocked while upgrade is pending")]
+    fn test_accept_admin_blocked_during_pending_upgrade() {
+        use soroban_sdk::BytesN;
+
+        let f = setup_fixture(2);
+        f.client.propose_admin(&Address::generate(&f.env));
+        f.client.propose_upgrade(&BytesN::from_array(&f.env, &[10u8; 32]));
+        f.client.accept_admin();
+    }
+
+    /// Issue #443: once the upgrade is cancelled, admin rotation works again
+    /// and the new admin must start a fresh 48h timelock.
+    #[test]
+    #[should_panic(expected = "upgrade timelock has not elapsed")]
+    fn test_admin_rotation_restarts_timelock() {
+        use soroban_sdk::BytesN;
+
+        let f = setup_fixture(2);
+        let hash = BytesN::from_array(&f.env, &[11u8; 32]);
+        f.client.propose_upgrade(&hash);
+        f.env.ledger().with_mut(|l| l.timestamp += 172_000);
+        f.client.cancel_upgrade();
+        f.client.propose_admin(&Address::generate(&f.env));
+        f.client.accept_admin();
+        f.client.propose_upgrade(&hash);
+        f.env.ledger().with_mut(|l| l.timestamp += 3_600);
+        f.client.upgrade(&hash);
+    }
+
+    /// Issue #444: `check_invariants` tracks locked funds through a cycle.
+    #[test]
+    fn test_check_invariants_balanced() {
+        let f = setup_fixture(2);
+        for m in f.members.iter() {
+            f.client.join(&m);
+        }
+        assert_eq!(f.client.check_invariants(), (0, 0, 0));
+        for m in f.members.iter() {
+            f.client.contribute(&m, &f.contribution);
+        }
+        let locked = f.contribution * 2;
+        assert_eq!(f.client.check_invariants(), (locked, locked, 0));
+        f.env.ledger().with_mut(|l| l.timestamp += f.interval + 1);
+        f.client.payout();
+        assert_eq!(f.client.check_invariants(), (0, 0, 0));
     }
 }

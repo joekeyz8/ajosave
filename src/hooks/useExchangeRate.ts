@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { STALE_TIMES } from "@/lib/queryKeys";
 
 interface ExchangeRate {
   rate: number | null;
@@ -9,7 +10,10 @@ interface ExchangeRate {
   error: string | null;
 }
 
-const REFRESH_INTERVAL_MS = 60_000;
+// staleTime: 300 s (STALE_TIMES.FX_RATE — issue #403)
+// FX rates from the external provider change at most every few minutes.
+// Polling at 60 s was wasteful and could hit provider rate limits on mobile.
+const REFRESH_INTERVAL_MS = STALE_TIMES.FX_RATE;
 
 export function useExchangeRate(currency = "NGN"): ExchangeRate {
   const [rate, setRate] = useState<number | null>(null);

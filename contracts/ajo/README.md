@@ -119,6 +119,12 @@ Admin-only, before the circle starts. `order` must be a permutation of `0..max_m
 
 Read-only. Returns the four key state values.
 
+### `get_circle_state(env) → CircleState`
+
+Single-call snapshot for off-chain indexers: `status` (`forming` | `active` |
+`paused` | `completed`), `current_cycle`, `total_members`, `joined_members`,
+`next_payout_at`, `admin`, `token`. Extends the instance TTL.
+
 ### `get_members(env) → Vec<Address>`
 
 Read-only. Returns all member addresses in join order.
@@ -348,11 +354,22 @@ the admin-configured threshold (`set_missed_policy`, default `1`, range
 
 Read-only: `get_missed_policy`, `get_missed_contributions`, `is_suspended`.
 
+### Enforcement and source of truth
+
+- **The contract is the single source of truth.** The counter increments and
+  suspension fires inside `payout` itself, once the ledger time has reached
+  `next_payout_at` — no off-chain trigger is required.
+- The backend never decides suspension. `processMissedContributions` in
+  `scheduler.service.ts` only handles off-chain side effects (notifications,
+  DB bookkeeping, penalties); the event indexer mirrors on-chain
+  `contribution_missed` / `member_suspended` events into the database.
+- Suspended members stay suspended until the admin calls `reinstate_member`.
+
 ## Temporary Storage TTL
 
 Per-cycle contribution flags live in temporary storage. Each write extends the
 entry's TTL to cover the cycle interval plus a one-day buffer (minimum 7 days,
 capped at the network max TTL), so an entry cannot expire before `payout` reads
 it. Entries are removed when the circle completes. `set_ttl_config` now
-validates `1 <= threshold <= extend_to`, `extend_to >= 1 day` and
-`extend_to <= max_ttl`, and emits `ttl_config_updated`.
+validates `1 day <= threshold <= extend_to` and `extend_to <= max_ttl`, and
+emits `TtlConfigUpdated` (plus the legacy `ttl_config_updated`).

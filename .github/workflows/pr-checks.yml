@@ -3,6 +3,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+concurrency:
+  group: pr-checks-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:  # least-privilege CI tokens (#108)
   contents: read
   pull-requests: write   # post PR comments / labels

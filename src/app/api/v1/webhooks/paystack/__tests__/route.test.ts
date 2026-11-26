@@ -19,6 +19,7 @@ jest.mock("@/lib/logger", () => ({
 }));
 
 import * as db from "@/lib/db";
+import logger from "@/lib/logger";
 const mockQuery = db.query as jest.MockedFunction<typeof db.query>;
 const mockTransaction = db.transaction as jest.MockedFunction<typeof db.transaction>;
 
@@ -51,6 +52,18 @@ describe("POST /api/v1/webhooks/paystack", () => {
     const req = makeRequest(CHARGE_SUCCESS, "badsignature");
     const res = await POST(req);
     expect(res.status).toBe(401);
+  });
+
+  it("returns 401 and writes a security audit log for a tampered payload", async () => {
+    const original = JSON.stringify(CHARGE_SUCCESS);
+    const sig = createHmac("sha512", SECRET).update(original).digest("hex");
+    const tampered = { ...CHARGE_SUCCESS, data: { reference: "ajo-circle-9-member-9-9" } };
+    const res = await POST(makeRequest(tampered, sig));
+    expect(res.status).toBe(401);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ securityAudit: true, event: "PAYSTACK_WEBHOOK_INVALID_SIGNATURE" }),
+      "Invalid Paystack webhook signature"
+    );
   });
 
   it("returns 400 when event ID is missing", async () => {

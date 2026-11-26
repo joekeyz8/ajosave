@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getUserReputation } from "@/server/services/reputation.service";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import type { ApiResponse, ReputationScore } from "@/types";
 
 // GET /api/reputation — fetch current user's score
-export const GET = withErrorHandler(async (_req: NextRequest) => {
+export const GET = withRouteRateLimit(withErrorHandler(async (_req: NextRequest) => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -28,10 +28,10 @@ export const GET = withErrorHandler(async (_req: NextRequest) => {
     success: true,
     data: record,
   });
-});
+}));
 
 // POST /api/reputation — recalculate score from contribution history
-export const POST = withErrorHandler(async (req: NextRequest) => {
+export const POST = withRouteRateLimit(withErrorHandler(async (req: NextRequest) => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -57,4 +57,4 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   };
 
   return NextResponse.json<ApiResponse<ReputationScore>>({ success: true, data: record });
-});
+}));

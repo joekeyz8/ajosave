@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import { CIRCLE_TEMPLATES, CircleTemplate } from "@/data/circleTemplates";
 
 /**

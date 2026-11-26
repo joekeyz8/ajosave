@@ -5,7 +5,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { createCircleSchema, type CreateCircleInput } from "@/types/schemas";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useFormPersistence } from "@/hooks/useFormPersistence";
 import styles from "./CreateCircleWizard.module.css";
@@ -27,6 +27,7 @@ export function CreateCircleWizard() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [draftPromptOpen, setDraftPromptOpen] = useState(false);
 
   const form = useForm<CreateCircleInput>({
     resolver: zodResolver(createCircleSchema),
@@ -50,8 +51,28 @@ export function CreateCircleWizard() {
     formState: { errors },
   } = form;
 
-  // Persist wizard state to sessionStorage across refreshes.
-  const { clearPersistedForm } = useFormPersistence(form, FORM_STORAGE_KEY);
+  // Persist wizard state to sessionStorage across refreshes. Restoration is
+  // deferred (autoRestore: false) so we can prompt the user to continue or
+  // discard a saved draft rather than silently overwriting a fresh start.
+  // No sensitive fields exist in this form, so all values are safe to persist.
+  const { clearPersistedForm, hasDraft, restoreDraft } = useFormPersistence(form, FORM_STORAGE_KEY, {
+    autoRestore: false,
+  });
+
+  // When a saved draft is detected on mount, ask before restoring it.
+  useEffect(() => {
+    if (hasDraft) setDraftPromptOpen(true);
+  }, [hasDraft]);
+
+  const continueDraft = useCallback(() => {
+    restoreDraft();
+    setDraftPromptOpen(false);
+  }, [restoreDraft]);
+
+  const discardDraft = useCallback(() => {
+    clearPersistedForm();
+    setDraftPromptOpen(false);
+  }, [clearPersistedForm]);
 
   /** Validate current step's fields then advance. */
   const goNext = useCallback(async () => {
@@ -84,6 +105,14 @@ export function CreateCircleWizard() {
       const json = await res.json();
       if (!json.success) throw new Error(json.error);
       clearPersistedForm();
+      // Store the circle name so the detail page can fire the success toast
+      // immediately on mount (sessionStorage survives client-side navigation).
+      if (typeof sessionStorage !== "undefined") {
+        sessionStorage.setItem(
+          "circle_created_toast",
+          JSON.stringify({ name: data.name })
+        );
+      }
       router.push(`/circles/${json.data.id}`);
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : "Something went wrong");
@@ -96,6 +125,22 @@ export function CreateCircleWizard() {
 
   return (
     <div className={styles.wizard} aria-label="Create a new savings circle">
+      {draftPromptOpen && (
+        <div className={styles.draftPrompt} role="dialog" aria-label="Restore saved draft">
+          <p className={styles.draftPromptText}>
+            We found an unfinished circle draft. Continue where you left off?
+          </p>
+          <div className={styles.draftPromptActions}>
+            <Button type="button" variant="ghost" onClick={discardDraft}>
+              Discard
+            </Button>
+            <Button type="button" onClick={continueDraft}>
+              Continue your draft
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div>
         <h1 className={styles.title}>Create a Circle</h1>
         <p className={styles.subtitle}>Set up your savings circle in a few steps.</p>

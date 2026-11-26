@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getCircleById, shuffleAndPersistPositions } from "@/server/services/circle.service";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import type { ApiResponse, Member } from "@/types";
 import { randomBytes } from "crypto";
 
@@ -11,7 +11,7 @@ import { randomBytes } from "crypto";
  * Randomizes payout positions for an open circle (creator only).
  * Generates a seed, persists shuffled positions to DB, and stores seed for verifiability.
  */
-export const POST = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
+export const POST = withRouteRateLimit(withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -57,4 +57,4 @@ export const POST = withErrorHandler(async (_req: NextRequest, ctx: unknown) => 
       { status: 400 }
     );
   }
-});
+}));

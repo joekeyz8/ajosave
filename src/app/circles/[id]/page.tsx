@@ -22,6 +22,7 @@ import { CircleCompletionScreen } from "@/components/circle/CircleCompletionScre
 import { ContributeButton } from "@/components/circle/ContributeButton";
 import { DisputeForm } from "@/components/circle/DisputeForm";
 import { EarlyExitButton } from "@/components/circle/EarlyExitButton";
+import { SectionErrorBoundary } from "@/components/ui/SectionErrorBoundary";
 import styles from "./page.module.css";
 
 interface Props {
@@ -99,6 +100,9 @@ export default async function CircleDetailPage({ params }: Props) {
   return (
     <div className={styles.page}>
       <div className="container">
+        {/* Fire success toast when arriving from CreateCircleWizard (#393) */}
+        <CircleCreatedToast />
+
         <div className={styles.header}>
           <div>
             <h1 className={styles.title}>{circle.name}</h1>
@@ -141,12 +145,16 @@ export default async function CircleDetailPage({ params }: Props) {
         <div className={styles.grid}>
           <div className="card" style={{ gridColumn: "1 / -1" }}>
             <h2 className={styles.sectionTitle}>Payout History</h2>
-            <PayoutHistory circleId={circle.id} initialPayouts={payoutHistory} />
+            <SectionErrorBoundary section="Payout History">
+              <PayoutHistory circleId={circle.id} initialPayouts={payoutHistory} />
+            </SectionErrorBoundary>
           </div>
 
           <div className="card" style={{ gridColumn: "1 / -1" }}>
             <h2 className={styles.sectionTitle}>Contribution History</h2>
-            <ContributionHistory circleId={circle.id} initialData={contributions} />
+            <SectionErrorBoundary section="Contribution History">
+              <ContributionHistory circleId={circle.id} initialData={contributions} />
+            </SectionErrorBoundary>
           </div>
 
           <div className="card">
@@ -210,7 +218,9 @@ export default async function CircleDetailPage({ params }: Props) {
             </dl>
           </div>
 
-          <MemberPayoutList circle={circle} initialMembers={members} isCreator={isCreator} currentUserId={userId} />
+          <SectionErrorBoundary section="Member List">
+            <MemberPayoutList circle={circle} initialMembers={members} isCreator={isCreator} currentUserId={userId} />
+          </SectionErrorBoundary>
         </div>
 
         {isAdmin && (
@@ -221,7 +231,9 @@ export default async function CircleDetailPage({ params }: Props) {
         )}
 
         {userId && (
-          <LazyCircleChat circleId={circle.id} isActiveMember={isActiveMember} currentUserId={userId} />
+          <SectionErrorBoundary section="Circle Chat">
+            <LazyCircleChat circleId={circle.id} isActiveMember={isActiveMember} currentUserId={userId} />
+          </SectionErrorBoundary>
         )}
 
         {isActiveMember && circle.status === "active" && (

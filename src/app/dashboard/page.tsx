@@ -1,5 +1,6 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { authOptions } from "@/lib/auth";
 import { getCirclesByUser } from "@/server/services/circle.service";
 import { CircleCard } from "@/components/circle/CircleCard";
@@ -35,23 +36,25 @@ export default async function DashboardPage() {
           </Link>
         </div>
 
-        {circles.length === 0 ? (
-          <EmptyState
-            title="No circles yet"
-            description="You haven't joined any savings circles yet. Browse open circles or create your own to get started."
-            illustration="circles"
-            ctas={[
-              { label: "Browse circles", href: "/circles", variant: "primary", "data-onboarding": "browse-circles" },
-              { label: "Create a circle", href: "/circles/create", variant: "secondary" },
-            ]}
-          />
-        ) : (
-          <div className={styles.grid}>
-            {circles.map((circle) => (
-              <CircleCard key={circle.id} circle={circle} members={[]} />
-            ))}
-          </div>
-        )}
+        <Suspense fallback={<div style={{ padding: "var(--space-6)" }}><p>Loading your circles...</p></div>}>
+          {circles.length === 0 ? (
+            <EmptyState
+              title="No circles yet"
+              description="You haven't joined any savings circles yet. Browse open circles or create your own to get started."
+              illustration="circles"
+              ctas={[
+                { label: "Browse circles", href: "/circles", variant: "primary", "data-onboarding": "browse-circles" },
+                { label: "Create a circle", href: "/circles/create", variant: "secondary" },
+              ]}
+            />
+          ) : (
+            <div className={styles.grid}>
+              {circles.map((circle) => (
+                <CircleCard key={circle.id} circle={circle} members={[]} />
+              ))}
+            </div>
+          )}
+        </Suspense>
       </div>
     </div>
   );

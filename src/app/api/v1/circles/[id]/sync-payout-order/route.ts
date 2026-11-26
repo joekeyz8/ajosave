@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getCircleById, getMembersByCircle } from "@/server/services/circle.service";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import { invokeContractSetPayoutOrder } from "@/lib/soroban";
 import type { ApiResponse } from "@/types";
 
@@ -11,7 +11,7 @@ import type { ApiResponse } from "@/types";
  * Syncs randomized payout order from DB to smart contract (admin/creator only).
  * Must be called after shuffle and before circle starts.
  */
-export const POST = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
+export const POST = withRouteRateLimit(withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -85,4 +85,4 @@ export const POST = withErrorHandler(async (_req: NextRequest, ctx: unknown) => 
       { status: 400 }
     );
   }
-});
+}));

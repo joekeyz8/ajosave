@@ -3,6 +3,7 @@ import { serverConfig } from "@/server/config";
 import type { SupportedCurrency } from "@/types";
 import { toSmallestUnit } from "./currency";
 import { getCorrelationId } from "./correlation";
+import { paystackBreaker, CircuitOpenError } from "./circuit-breaker";
 
 const client = axios.create({
   baseURL: "https://api.paystack.co",
@@ -16,6 +17,9 @@ client.interceptors.request.use((config) => {
   if (correlationId) config.headers["x-correlation-id"] = correlationId;
   return config;
 });
+
+// Child span per Paystack HTTP call (#479)
+instrumentHttpClient(client, "paystack");
 
 // Map our currency codes to Paystack currency codes
 const PAYSTACK_CURRENCY_MAP: Record<SupportedCurrency, string> = {
@@ -72,7 +76,7 @@ export async function initializePayment(params: {
     };
   }
 
-  const { data } = await client.post("/transaction/initialize", body);
+  const { data } = await paystackBreaker.execute(() => client.post("/transaction/initialize", body));
   return {
     authorizationUrl: data.data.authorization_url,
     reference: data.data.reference,
@@ -87,7 +91,7 @@ export async function verifyPayment(
   amount: number;
   currency: string;
 }> {
-  const { data } = await client.get(`/transaction/verify/${reference}`);
+  const { data } = await paystackBreaker.execute(() => client.get(`/transaction/verify/${reference}`));
   return {
     status: data.data.status,
     amount: data.data.amount,

@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { getCircleById, getMembersByCircle } from "@/server/services/circle.service";
 import { initializePayment } from "@/lib/paystack";
 import { serverConfig } from "@/server/config";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import { query } from "@/lib/db";
 import { z } from "zod";
 import type { ApiResponse } from "@/types";
@@ -17,7 +17,7 @@ const bodySchema = z.object({
  * POST /api/v1/circles/:id/topup
  * Pay the remaining balance on a partial contribution for the current cycle.
  */
-export const POST = withErrorHandler(async (req: NextRequest, ctx: unknown) => {
+export const POST = withRouteRateLimit(withErrorHandler(async (req: NextRequest, ctx: unknown) => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -133,4 +133,4 @@ export const POST = withErrorHandler(async (req: NextRequest, ctx: unknown) => {
       topUpUsdc,
     },
   });
-});
+}));

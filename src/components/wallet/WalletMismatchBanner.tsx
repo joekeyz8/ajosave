@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import styles from "./WalletMismatchBanner.module.css";
 
 /** Truncates a Stellar address to first 6 … last 4 chars. */
@@ -39,27 +40,24 @@ export function WalletMismatchBanner({
   onSwitch,
   onDisconnect,
 }: WalletMismatchBannerProps): JSX.Element | null {
+  const t = useTranslations("walletMismatch");
   const [bannerState, setBannerState] = useState<BannerState>("idle");
 
   useEffect(() => {
     if (!connectedAddress) {
-      // No wallet connected — don't show the banner.
       setBannerState("idle");
       return;
     }
 
     if (connectedAddress === expectedAddress) {
       if (bannerState === "mismatch") {
-        // The user just switched to the correct wallet — show resolved briefly.
         setBannerState("resolved");
         const timer = setTimeout(() => setBannerState("idle"), 3000);
         return () => clearTimeout(timer);
       }
-      // Already idle (or resolved fading out) — keep as-is.
       return;
     }
 
-    // Addresses differ → show the mismatch banner.
     setBannerState("mismatch");
   }, [connectedAddress, expectedAddress]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -71,7 +69,7 @@ export function WalletMismatchBanner({
     return (
       <div className={styles.resolved} role="status" aria-live="polite">
         <span className={styles.resolvedIcon} aria-hidden="true">✓</span>
-        Wallet switched successfully — you&apos;re now using the correct account.
+        {t("resolvedMessage")}
       </div>
     );
   }
@@ -87,23 +85,16 @@ export function WalletMismatchBanner({
       <span className={styles.icon} aria-hidden="true">⚠</span>
 
       <div className={styles.body}>
-        <p className={styles.title}>Wallet mismatch detected</p>
-        <p className={styles.description}>
-          The connected wallet does not match the Stellar address registered to
-          your account. Switch wallets or disconnect before performing any
-          transactions.
-        </p>
+        <p className={styles.title}>{t("title")}</p>
+        <p className={styles.description}>{t("description")}</p>
 
-        <div
-          className={styles.addresses}
-          aria-label="Address comparison"
-        >
+        <div className={styles.addresses} aria-label={t("addressComparison")}>
           <div className={styles.addressRow}>
-            <span className={styles.addressLabel}>Expected:</span>
+            <span className={styles.addressLabel}>{t("expected")}</span>
             <span
               className={`${styles.addressPill} ${styles["addressPill--expected"]}`}
               title={expectedAddress}
-              aria-label={`Expected address: ${expectedAddress}`}
+              aria-label={`${t("expected")} ${expectedAddress}`}
             >
               {truncateAddress(expectedAddress)}
             </span>
@@ -111,11 +102,11 @@ export function WalletMismatchBanner({
 
           {connectedAddress && (
             <div className={styles.addressRow}>
-              <span className={styles.addressLabel}>Connected:</span>
+              <span className={styles.addressLabel}>{t("connected")}</span>
               <span
                 className={styles.addressPill}
                 title={connectedAddress}
-                aria-label={`Connected address: ${connectedAddress}`}
+                aria-label={`${t("connected")} ${connectedAddress}`}
               >
                 {truncateAddress(connectedAddress)}
               </span>
@@ -128,17 +119,17 @@ export function WalletMismatchBanner({
             type="button"
             className={styles.switchButton}
             onClick={onSwitch}
-            aria-label="Switch to the expected wallet"
+            aria-label={t("switchAriaLabel")}
           >
-            Switch wallet
+            {t("switchButton")}
           </button>
           <button
             type="button"
             className={styles.disconnectButton}
             onClick={onDisconnect}
-            aria-label="Disconnect the current wallet"
+            aria-label={t("disconnectAriaLabel")}
           >
-            Disconnect
+            {t("disconnectButton")}
           </button>
         </div>
       </div>

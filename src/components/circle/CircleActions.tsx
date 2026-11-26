@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { ConfirmModal } from "@/components/ui/ConfirmModal";
 import { DestructiveConfirmModal } from "@/components/ui/DestructiveConfirmModal";
+import styles from "./CircleActions.module.css";
 
 interface Props {
   circleId: string;
@@ -111,7 +112,7 @@ export function CircleActions({ circleId, isCreator, isMember, status }: Props) 
 
   return (
     <>
-      <div style={{ display: "flex", gap: "var(--space-3)", alignItems: "center" }}>
+      <div className={styles.actions}>
         {isCreator && status === "open" && (
           <Button
             variant="outline"

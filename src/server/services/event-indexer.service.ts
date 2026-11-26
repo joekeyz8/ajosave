@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 /**
  * Soroban contract event indexer — Issue #132
  *
@@ -13,7 +14,7 @@
  * Checkpoint: last_indexed_ledger stored in indexer_state per contract.
  */
 
-import { getContractEvents, type ContractEvent } from "@/lib/soroban";
+import { getContractEvents, getCircleState, type ContractEvent } from "@/lib/soroban";
 import { serverConfig } from "@/server/config";
 import { query } from "@/lib/db";
 import { randomUUID } from "crypto";
@@ -30,18 +31,18 @@ let running = false;
 
 export function startEventIndexer(): void {
   if (running || !CONTRACT_ID) {
-    if (!CONTRACT_ID) console.warn("[event-indexer] No contract ID configured, skipping");
+    if (!CONTRACT_ID) logger.warn("[event-indexer] No contract ID configured, skipping");
     return;
   }
   running = true;
-  console.log(`[event-indexer] Starting (contract: ${CONTRACT_ID}, interval: ${POLL_INTERVAL_MS}ms)`);
+  logger.info(`[event-indexer] Starting (contract: ${CONTRACT_ID}, interval: ${POLL_INTERVAL_MS}ms)`);
   scheduleNext();
 }
 
 export function stopEventIndexer(): void {
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
   running = false;
-  console.log("[event-indexer] Stopped");
+  logger.info("[event-indexer] Stopped");
 }
 
 export function getIndexerStatus(): { running: boolean; contractId: string } {
@@ -53,7 +54,7 @@ export function getIndexerStatus(): { running: boolean; contractId: string } {
 function scheduleNext(): void {
   pollTimer = setTimeout(async () => {
     try { await pollOnce(); } catch (err) {
-      console.error("[event-indexer] Poll error:", err);
+      logger.error("[event-indexer] Poll error:", err);
     }
     if (running) scheduleNext();
   }, POLL_INTERVAL_MS);
@@ -77,7 +78,7 @@ export async function pollOnce(): Promise<number> {
   }
 
   if (maxLedger > startLedger) await saveCheckpoint(CONTRACT_ID, maxLedger);
-  if (processed > 0) console.log(`[event-indexer] Processed ${processed} new event(s) up to ledger ${maxLedger}`);
+  if (processed > 0) logger.info(`[event-indexer] Processed ${processed} new event(s) up to ledger ${maxLedger}`);
   return processed;
 }
 
@@ -132,6 +133,32 @@ async function saveCheckpoint(contractId: string, ledger: number): Promise<void>
 
 // ── Event reactions ───────────────────────────────────────────────────────────
 
+/** Contract events with no side effects beyond being marked processed. */
+export const AUDIT_TOPICS = new Set<string>([
+  "initialized",
+  "member_joined",
+  "circle_started",
+  "reputation_updated",
+  "migrated",
+  "upgrade_proposed",
+  "upgrade_cancelled",
+  "upgraded",
+  "paused",
+  "unpaused",
+  "CirclePaused",
+  "CircleUnpaused",
+  "CircleResumed",
+  "PauseSignersUpdated",
+  "GuardianUpdated",
+  "PayoutOrderSet",
+  "admin_proposed",
+  "admin_transferred",
+  "ttl_config_updated",
+  "missed_policy_updated",
+  "member_suspended",
+  "member_reinstated",
+]);
+
 async function reactToEvent(event: ContractEvent): Promise<void> {
   const topic = event.topic?.[0];
   const txHash = event.transactionHash;
@@ -151,11 +178,16 @@ async function reactToEvent(event: ContractEvent): Promise<void> {
       case "circle_completed":
         await onCircleCompleted(val);
         break;
-      // member_joined — stored for audit; no extra action needed
+      default:
+        // Remaining contract events (see contracts/ajo/EVENTS.md) are recorded
+        // for audit only; anything else is an unknown topic worth flagging.
+        if (!AUDIT_TOPICS.has(topic ?? "")) {
+          console.warn(`[event-indexer] Unknown event topic=${topic} tx=${txHash}`);
+        }
     }
     await markProcessed(txHash, topic ?? "unknown");
   } catch (err) {
-    console.error(`[event-indexer] Handler failed for topic=${topic} tx=${txHash}:`, err);
+    logger.error(`[event-indexer] Handler failed for topic=${topic} tx=${txHash}:`, err);
     // Leave processed=false so it can be retried
   }
 }
@@ -179,7 +211,7 @@ async function onContributionMade(val: any, txHash: string): Promise<void> {
   );
   for (const row of rows) {
     await incrementReputationOnContribution(row.user_id);
-    console.log(`[event-indexer] contribution_made → confirmed contribution ${row.id}`);
+    logger.info(`[event-indexer] contribution_made → confirmed contribution ${row.id}`);
   }
 }
 
@@ -211,7 +243,7 @@ async function onPayoutSent(val: any, txHash: string): Promise<void> {
     [memberId]
   );
 
-  console.log(`[event-indexer] payout_sent → recorded payout for member ${memberId}`);
+  logger.info(`[event-indexer] payout_sent → recorded payout for member ${memberId}`);
 }
 
 /** Mark the member as defaulted. */
@@ -226,7 +258,7 @@ async function onMemberDefaulted(val: any): Promise<void> {
        AND u.stellar_public_key = $2`,
     [val.circle_id, val.member_address]
   );
-  console.log(`[event-indexer] member_defaulted → marked defaulted (circle: ${val.circle_id})`);
+  logger.info(`[event-indexer] member_defaulted → marked defaulted (circle: ${val.circle_id})`);
 }
 
 /** Mark the circle as completed. */
@@ -238,5 +270,28 @@ async function onCircleCompleted(val: any): Promise<void> {
   );
   // Queue on-chain completion certificates for every member (#241).
   await queueCertificatesForCircle(val.circle_id);
-  console.log(`[event-indexer] circle_completed → circle ${val.circle_id} marked completed`);
+  logger.info(`[event-indexer] circle_completed → circle ${val.circle_id} marked completed`);
+}
+
+// ── State reconciliation ──────────────────────────────────────────────────────
+
+/**
+ * Snapshot on-chain state with a single get_circle_state() read and correct
+ * any drift in the circles table (issue #460).
+ */
+export async function reconcileCircleState(contractId: string): Promise<void> {
+  try {
+    const state = await getCircleState(contractId);
+    await query(
+      `UPDATE circles
+          SET current_cycle = $2,
+              status = CASE WHEN $3 = 'completed' THEN 'completed' ELSE status END,
+              updated_at = NOW()
+        WHERE contract_id = $1
+          AND (current_cycle IS DISTINCT FROM $2 OR ($3 = 'completed' AND status != 'completed'))`,
+      [contractId, state.current_cycle, state.status]
+    );
+  } catch (err) {
+    console.error(`[event-indexer] State reconciliation failed for ${contractId}:`, err);
+  }
 }

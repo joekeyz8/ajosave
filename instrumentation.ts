@@ -1,6 +1,14 @@
 export async function register() {
+  // OpenTelemetry: exports to OTEL_EXPORTER_OTLP_ENDPOINT when configured (#479)
+  const { registerOTel } = await import("@vercel/otel");
+  registerOTel({ serviceName: process.env.OTEL_SERVICE_NAME ?? "ajosave" });
+
   if (process.env.NEXT_RUNTIME === "nodejs") {
     await import("./sentry.server.config");
+
+    if (process.env.NODE_ENV === "production" && !process.env.PAYSTACK_SECRET_KEY) {
+      throw new Error("PAYSTACK_SECRET_KEY must be set: Paystack webhook signatures cannot be verified");
+    }
 
     if (process.env.NODE_ENV === "production") {
       const runner: any = await import("node-pg-migrate");

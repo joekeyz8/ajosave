@@ -119,6 +119,7 @@ const envSchema = z.object({
 
   // Redis / queue / outbox
   REDIS_URL: z.string().default("redis://localhost:6379"),
+  REDIS_SENTINEL_URL: z.string().optional().default(""),
   OUTBOX_BATCH_LIMIT: numericString("50"),
   OUTBOX_MAX_ATTEMPTS: numericString("5"),
   WORKER_SHUTDOWN_TIMEOUT_MS: numericString("10000"),

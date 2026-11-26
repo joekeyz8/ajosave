@@ -17,6 +17,10 @@ on:
         required: false
         default: "main"
 
+concurrency:
+  group: contract-wasm-release
+  cancel-in-progress: true
+
 permissions:
   contents: write # upload release assets
   id-token: write # OIDC token for provenance signing

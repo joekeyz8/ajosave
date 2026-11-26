@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
+import { useTranslations } from "next-intl";
+import styles from "./offline.module.css";
 
 export default function OfflinePage() {
+  const t = useTranslations("offline");
   const [isBack, setIsBack] = useState(false);
 
   useEffect(() => {
@@ -11,29 +15,24 @@ export default function OfflinePage() {
     return () => window.removeEventListener("online", handleOnline);
   }, []);
 
+  const handleRetry = () => window.location.reload();
+
   return (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        minHeight: "60vh",
-        gap: "1.25rem",
-        textAlign: "center",
-        padding: "2rem",
-      }}
-    >
-      <span style={{ fontSize: "3rem" }} aria-hidden="true">
-        📡
-      </span>
+    <div className={styles.wrapper}>
+      {/* Branded logo */}
+      <Image
+        src="/icons/icon-192.svg"
+        alt="Ajosave"
+        width={72}
+        height={72}
+        className={styles.logo}
+        priority
+      />
 
       {isBack ? (
         <>
-          <h1 style={{ fontSize: "1.75rem", fontWeight: "bold", color: "var(--color-text-primary)" }}>
-            You&apos;re back online!
-          </h1>
-          <p style={{ color: "var(--color-text-secondary)", maxWidth: "400px" }}>
+          <h1 className={styles.heading}>You&apos;re back online!</h1>
+          <p className={styles.message}>
             Connection restored. Head back to pick up where you left off.
           </p>
           <a href="/" className="btn btn--primary">
@@ -42,23 +41,26 @@ export default function OfflinePage() {
         </>
       ) : (
         <>
-          <h1 style={{ fontSize: "1.75rem", fontWeight: "bold", color: "var(--color-text-primary)" }}>
-            You&apos;re offline
-          </h1>
-          <p style={{ color: "var(--color-text-secondary)", maxWidth: "400px" }}>
-            No internet connection. Cached pages are still available — you can
-            browse your circles and dashboard while offline. Changes will sync
-            when you reconnect.
-          </p>
-          <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap", justifyContent: "center" }}>
-            <a href="/circles" className="btn btn--primary">
+          <h1 className={styles.heading}>{t("heading")}</h1>
+          <p className={styles.message}>{t("message")}</p>
+
+          <div className={styles.actions}>
+            <button
+              type="button"
+              className="btn btn--primary"
+              onClick={handleRetry}
+            >
+              {t("retry")}
+            </button>
+            <a href="/circles" className="btn btn--secondary">
               My Circles
             </a>
             <a href="/dashboard" className="btn btn--secondary">
               Dashboard
             </a>
           </div>
-          <p style={{ fontSize: "0.75rem", color: "var(--color-text-tertiary, #9ca3af)" }}>
+
+          <p className={styles.waiting} aria-live="polite">
             Waiting for connection to restore…
           </p>
         </>

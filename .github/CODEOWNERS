@@ -10,7 +10,11 @@
 *                                   @joekeyz8
 
 # Smart contracts and schema: funds-critical, always owner-reviewed.
+# Branch protection sets require_code_owner_reviews, so PRs touching these
+# paths are blocked until an owner approves (#477).
+# Contract security reviewers
 /contracts/                         @joekeyz8
+# Backend leads
 /migrations/                        @joekeyz8
 
 # CI, security automation and repository policy.
@@ -18,6 +22,9 @@
 /codecov.yml                        @joekeyz8
 /jest.config.js                     @joekeyz8
 /SECURITY.md                        @joekeyz8
+
+# Security team
+/src/lib/encryption.ts              @joekeyz8
 
 # Component: auth-sessions
 /src/lib/auth.ts                    @joekeyz8

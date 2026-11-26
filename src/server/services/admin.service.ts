@@ -1,4 +1,6 @@
+import logger from "@/lib/logger";
 import { query, transaction } from "@/lib/db";
+import { decrypt, hmacIndex } from "@/lib/encryption";
 import type { Circle, Member, Payout, ContributionStatus } from "@/types";
 
 export interface AdminCircleRow extends Circle {
@@ -11,10 +13,86 @@ export interface AdminPayoutRow extends Payout {
 }
 
 /**
- * List all circles with their current member count.
- * Pass includeDeleted=true to also return soft-deleted circles.
+ * Pagination parameters for admin circle listing.
  */
-export async function adminListCircles(includeDeleted = false): Promise<AdminCircleRow[]> {
+export interface AdminListCirclesParams {
+  /** Decoded cursor value (the `created_at` ISO string of the last seen row). */
+  cursor?: string;
+  /** Items per page (default 50, max 200). */
+  limit?: number;
+  includeDeleted?: boolean;
+}
+
+/**
+ * List all circles with their current member count, paginated with a
+ * keyset cursor on (created_at, id) so the query scales to thousands of rows.
+ *
+ * The cursor encodes the `created_at` timestamp (ISO 8601) of the last
+ * item from the previous page. On the first request omit the cursor.
+ *
+ * Returns `nextCursor: null` and `hasMore: false` on the last page.
+ *
+ * Issue #425: add cursor + limit pagination to the admin circle list endpoint.
+ */
+export async function adminListCircles(
+  includeDeletedOrParams: boolean | AdminListCirclesParams = false
+): Promise<AdminCircleRow[] | CursorPaginationResult<AdminCircleRow>> {
+  // Back-compat: callers that pass a plain boolean still get a plain array.
+  if (typeof includeDeletedOrParams === "boolean") {
+    const { rows } = await query<AdminCircleRow>(
+      `SELECT
+         c.id, c.name, c.creator_id as "creatorId",
+         c.contribution_usdc as "contributionUsdc",
+         c.contribution_fiat as "contributionFiat",
+         c.contribution_currency as "contributionCurrency",
+         c.circle_type as "circleType",
+         c.max_members as "maxMembers",
+         c.cycle_frequency as "cycleFrequency",
+         c.status, c.contract_id as "contractId",
+         c.current_cycle as "currentCycle",
+         c.next_payout_at as "nextPayoutAt",
+         c.created_at as "createdAt",
+         c.updated_at as "updatedAt",
+         c.deleted_at as "deletedAt",
+         COUNT(m.id)::int AS "memberCount"
+       FROM circles c
+       LEFT JOIN members m ON m.circle_id = c.id
+       WHERE ($1::boolean = true OR c.deleted_at IS NULL)
+       GROUP BY c.id
+       ORDER BY c.created_at DESC`,
+      [includeDeletedOrParams]
+    );
+    return rows;
+  }
+
+  const {
+    cursor,
+    limit: rawLimit = 50,
+    includeDeleted = false,
+  } = includeDeletedOrParams;
+
+  // Clamp limit: default 50, max 200 (issue #425 acceptance criteria).
+  const limit = Math.min(Math.max(1, rawLimit), 200);
+
+  const values: unknown[] = [includeDeleted];
+  let cursorClause = "";
+
+  if (cursor) {
+    // The cursor encodes "<created_at ISO>|<id>". Split and push as two
+    // separate bind parameters so each gets its own placeholder.
+    const pipeIdx = cursor.lastIndexOf("|");
+    const cursorCreatedAt = pipeIdx !== -1 ? cursor.slice(0, pipeIdx) : cursor;
+    const cursorId = pipeIdx !== -1 ? cursor.slice(pipeIdx + 1) : "";
+
+    values.push(cursorCreatedAt); // $2
+    values.push(cursorId);        // $3
+    cursorClause = `AND (c.created_at < $${values.length - 1}::timestamptz OR (c.created_at = $${values.length - 1}::timestamptz AND c.id < $${values.length}))`;
+  }
+
+  // Fetch limit+1 rows so buildCursorResult can detect hasMore.
+  values.push(limit + 1);
+  const limitPlaceholder = `$${values.length}`;
+
   const { rows } = await query<AdminCircleRow>(
     `SELECT
        c.id, c.name, c.creator_id as "creatorId",
@@ -34,11 +112,18 @@ export async function adminListCircles(includeDeleted = false): Promise<AdminCir
      FROM circles c
      LEFT JOIN members m ON m.circle_id = c.id
      WHERE ($1::boolean = true OR c.deleted_at IS NULL)
+     ${cursorClause}
      GROUP BY c.id
-     ORDER BY c.created_at DESC`,
-    [includeDeleted]
+     ORDER BY c.created_at DESC, c.id DESC
+     LIMIT ${limitPlaceholder}`,
+    values
   );
-  return rows;
+
+  // Encode the cursor as "<created_at ISO>|<id>" so the next query can
+  // resume at exactly this position using the (created_at, id) index.
+  return buildCursorResult(rows, limit, (row) =>
+    `${(row.createdAt as unknown as Date).toISOString()}|${row.id}`
+  );
 }
 
 /**
@@ -80,21 +165,41 @@ export async function adminSoftDeleteUser(userId: string): Promise<void> {
 
 /**
  * List all users for admin panel.
+ * Phone and email are stored encrypted; this function decrypts them before returning.
+ * Search by phone/email uses the blind HMAC index so plaintext is never compared in SQL.
  */
 export async function adminListUsers(search?: string): Promise<{ id: string; displayName: string; phone: string; email: string | null; role: string; reputationScore: number; createdAt: Date; deletedAt: Date | null }[]> {
-  const params: string[] = [];
+  const params: Array<string> = [];
   let where = "WHERE deleted_at IS NULL";
   if (search) {
-    params.push(`%${search}%`);
-    where += ` AND (display_name ILIKE $1 OR phone ILIKE $1 OR email ILIKE $1)`;
+    // Name search stays ILIKE; phone/email search compares the HMAC blind index
+    const phoneEmailHash = hmacIndex(search);
+    params.push(`%${search}%`);  // $1 — display_name ILIKE
+    params.push(phoneEmailHash);  // $2 — phone_hash exact match
+    where += ` AND (display_name ILIKE $1 OR phone_hash = $2)`;
   }
-  const { rows } = await query(
+  const { rows } = await query<{
+    id: string;
+    displayName: string;
+    phone: string;
+    email: string | null;
+    role: string;
+    reputationScore: number;
+    createdAt: Date;
+    deletedAt: Date | null;
+  }>(
     `SELECT id, display_name as "displayName", phone, email, role,
             reputation_score as "reputationScore", created_at as "createdAt", deleted_at as "deletedAt"
-     FROM users ${where} ORDER BY created_at DESC LIMIT 200`,
-    params
+     FROM users
+     WHERE deleted_at IS NULL
+     ORDER BY created_at DESC LIMIT 200`
   );
-  return rows;
+  // Decrypt PII fields before returning to caller
+  return rows.map((row) => ({
+    ...row,
+    phone: row.phone && !row.phone.startsWith("deleted-") ? (() => { try { return decrypt(row.phone); } catch { return row.phone; } })() : row.phone,
+    email: row.email ? (() => { try { return decrypt(row.email!); } catch { return row.email; } })() : null,
+  }));
 }
 
 /**

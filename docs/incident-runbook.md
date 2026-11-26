@@ -118,6 +118,42 @@ look first. It complements, and does not replace:
 - To probe manually: `curl https://horizon-testnet.stellar.org/fee_stats`.
   A non-200 response confirms Horizon is down.
 
+### Stellar / Horizon outage (payouts failing)
+
+**Detect**
+- `stellarBreaker` OPEN in logs (`grep "circuit-breaker.*stellar.*OPEN" <app-logs>`),
+  Sentry spikes from `sendUsdcPayment`, or `/api/v1/health` reporting Horizon degraded.
+- Confirm on `https://status.stellar.org` and with
+  `curl -s -o /dev/null -w "%{http_code}" "$HORIZON_URL/fee_stats"`.
+- Classify: SEV1 if mainnet payouts are blocked, SEV2 if testnet only.
+
+**Pause scheduled payouts**
+1. Stop the payout worker (scale the worker deployment to 0, or set the
+   queue paused) so jobs stop burning retry attempts against a dead Horizon.
+2. Leave contribution intake running — contributions are recorded in
+   Postgres and are not lost.
+3. Do not manually re-submit transactions; a submitted-but-unconfirmed
+   transaction may still land. Check its hash on Stellar Expert first.
+
+**Communicate**
+- Post on the status page / in-app banner within 15 minutes:
+  "Payouts are delayed due to a Stellar network issue. Funds are safe and
+  payouts will resume automatically."
+- Update every 60 minutes until resolved; notify affected circle admins.
+
+**Recover (outbox retry path)**
+1. Wait until Horizon returns 200 consistently for 5+ minutes.
+2. Restart the payout worker. Failed payout/notification events in the
+   transactional outbox (`src/lib/outbox.ts`) are retried with exponential
+   backoff (`computeBackoffMs`) up to `OUTBOX_MAX_ATTEMPTS`.
+3. Events that exhausted retries are in the dead-letter set: list them with
+   `getDeadLetterEvents()` (count via `getDeadLetterCount()`), verify on-chain
+   that the payout did not already settle, then `replayDeadLetterEvent(id)`.
+4. Confirm the circuit breaker has closed and the dead-letter count is 0.
+5. Post the all-clear and open a post-incident review.
+
+See `docs/transactional-outbox.md` for the retry and dead-letter policy.
+
 ### Paystack gateway issues
 
 - Failed Paystack calls are wrapped by `paystackBreaker`. An open circuit

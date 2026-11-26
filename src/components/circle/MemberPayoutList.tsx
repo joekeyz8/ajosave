@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import type { Circle, Member } from "@/types";
 import { Button } from "@/components/ui/Button";
 import { MemberAvatar } from "@/components/ui/MemberAvatar";
+import { useKeyboardTableNav } from "@/hooks/useKeyboardTableNav";
 import styles from "./MemberPayoutList.module.css";
 
 interface Props {
@@ -30,6 +31,9 @@ async function fetchReputation(userId: string): Promise<number | null> {
 }
 
 export function MemberPayoutList({ circle, initialMembers, isCreator, currentUserId }: Props) {
+  // Wire up keyboard table navigation
+  const tableRef = useKeyboardTableNav<HTMLTableElement>();
+
   // Sort active members by payout position; pending members appear at the bottom.
   const [members, setMembers] = useState<Member[]>(
     [...initialMembers].sort((a, b) => {
@@ -117,64 +121,70 @@ export function MemberPayoutList({ circle, initialMembers, isCreator, currentUse
       {activeMembers.length === 0 ? (
         <p className={styles.empty}>No members yet.</p>
       ) : (
-        <ol className={styles.list} aria-label="Payout rotation order">
-          {activeMembers.map((m) => {
-            const isCurrent = circle.status === "active" && m.position === circle.currentCycle;
-            const isPast = m.hasReceivedPayout;
-            const isMe = !!currentUserId && m.userId === currentUserId;
-            const isAdmin = m.userId === circle.creatorId;
-            const repScore = reputation[m.userId];
+        <table ref={tableRef} className={styles.list} aria-label="Payout rotation order" role="grid">
+          <tbody>
+            {activeMembers.map((m) => {
+              const isCurrent = circle.status === "active" && m.position === circle.currentCycle;
+              const isPast = m.hasReceivedPayout;
+              const isMe = !!currentUserId && m.userId === currentUserId;
+              const isAdmin = m.userId === circle.creatorId;
+              const repScore = reputation[m.userId];
 
-            return (
-              <li
-                key={m.id}
-                className={[
-                  styles.item,
-                  isCurrent ? styles.current : "",
-                  isPast ? styles.past : "",
-                  isMe ? styles.me : "",
-                ].join(" ")}
-                aria-current={isCurrent ? "true" : undefined}
-              >
-                {/* Payout position badge */}
-                <span className={styles.cycle} aria-label={`Payout position ${m.position}`}>
-                  {m.position}
-                </span>
+              return (
+                <tr
+                  key={m.id}
+                  className={[
+                    styles.item,
+                    isCurrent ? styles.current : "",
+                    isPast ? styles.past : "",
+                    isMe ? styles.me : "",
+                  ].join(" ")}
+                  aria-current={isCurrent ? "true" : undefined}
+                >
+                  {/* Payout position badge */}
+                  <td className={styles.cycle} aria-label={`Payout position ${m.position}`}>
+                    {m.position}
+                  </td>
 
-                <MemberAvatar displayName={m.displayName} userId={m.userId} />
+                  <td>
+                    <MemberAvatar displayName={m.displayName} userId={m.userId} />
+                  </td>
 
-                <span className={styles.memberName}>
-                  {m.displayName ?? `Member ${m.userId.slice(0, 8)}…`}
-                  {isMe && <span className={styles.youBadge}>you</span>}
-                  {isAdmin && (
-                    <span className={styles.adminBadge} aria-label="Circle admin">
-                      Admin
-                    </span>
-                  )}
-                </span>
+                  <td className={styles.memberName}>
+                    {m.displayName ?? `Member ${m.userId.slice(0, 8)}…`}
+                    {isMe && <span className={styles.youBadge}>you</span>}
+                    {isAdmin && (
+                      <span className={styles.adminBadge} aria-label="Circle admin">
+                        Admin
+                      </span>
+                    )}
+                  </td>
 
-                {/* Reputation score */}
-                {repScore !== undefined && (
-                  <span
-                    className={styles.reputationBadge}
-                    title={`Reputation score: ${repScore}/100`}
-                    aria-label={`Reputation ${repScore}`}
-                  >
-                    ⭐ {repScore}
-                  </span>
-                )}
+                  {/* Reputation score */}
+                  <td>
+                    {repScore !== undefined && (
+                      <span
+                        className={styles.reputationBadge}
+                        title={`Reputation score: ${repScore}/100`}
+                        aria-label={`Reputation ${repScore}`}
+                      >
+                        ⭐ {repScore}
+                      </span>
+                    )}
+                  </td>
 
-                <span className={styles.statusTag}>
-                  {isPast && <span className={`${styles.tag} ${styles.tagDone}`}>Paid out ✓</span>}
-                  {isCurrent && <span className={`${styles.tag} ${styles.tagActive}`}>Receiving now</span>}
-                  {!isPast && !isCurrent && circle.status === "active" && (
-                    <span className={`${styles.tag} ${styles.tagPending}`}>Cycle {m.position}</span>
-                  )}
-                </span>
-              </li>
-            );
-          })}
-        </ol>
+                  <td className={styles.statusTag}>
+                    {isPast && <span className={`${styles.tag} ${styles.tagDone}`}>Paid out ✓</span>}
+                    {isCurrent && <span className={`${styles.tag} ${styles.tagActive}`}>Receiving now</span>}
+                    {!isPast && !isCurrent && circle.status === "active" && (
+                      <span className={`${styles.tag} ${styles.tagPending}`}>Cycle {m.position}</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       )}
 
       {/* ── Pending-approval members (admin view only) ── */}
@@ -186,21 +196,25 @@ export function MemberPayoutList({ circle, initialMembers, isCreator, currentUse
           <h3 id="pending-members-heading" className={styles.pendingHeading}>
             Awaiting Approval ({pendingMembers.length})
           </h3>
-          <ul className={styles.list} aria-label="Pending members awaiting approval">
-            {pendingMembers.map((m) => (
-              <li key={m.id} className={`${styles.item} ${styles.pendingItem}`}>
-                <MemberAvatar displayName={m.displayName} userId={m.userId} />
-                <span className={styles.memberName}>
-                  {m.displayName ?? `Member ${m.userId.slice(0, 8)}…`}
-                </span>
-                <span className={styles.statusTag}>
-                  <span className={`${styles.tag} ${styles.tagAwaiting}`} aria-label="Awaiting approval">
-                    Awaiting approval
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
+          <table className={styles.list} aria-label="Pending members awaiting approval">
+            <tbody>
+              {pendingMembers.map((m) => (
+                <tr key={m.id} className={`${styles.item} ${styles.pendingItem}`}>
+                  <td>
+                    <MemberAvatar displayName={m.displayName} userId={m.userId} />
+                  </td>
+                  <td className={styles.memberName}>
+                    {m.displayName ?? `Member ${m.userId.slice(0, 8)}…`}
+                  </td>
+                  <td className={styles.statusTag}>
+                    <span className={`${styles.tag} ${styles.tagAwaiting}`} aria-label="Awaiting approval">
+                      Awaiting approval
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </section>
       )}
     </div>

@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withRouteRateLimit } from "@/server/middleware";
+
+function escapeXml(str: string) {
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 
 // Minimal SVG-based OG image for circle pages
-export async function GET(req: NextRequest) {
+export const GET = withRouteRateLimit(async (req: NextRequest) => {
   const { searchParams } = new URL(req.url);
   const name = searchParams.get("name") ?? "Savings Circle";
   const amount = searchParams.get("amount") ?? "";
@@ -22,8 +27,4 @@ export async function GET(req: NextRequest) {
       "Cache-Control": "public, max-age=86400",
     },
   });
-}
-
-function escapeXml(str: string) {
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
+});

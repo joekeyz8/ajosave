@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import { query } from "@/lib/db";
 import {
   sendPayoutReminderSms,
@@ -64,7 +65,7 @@ export async function notifyPayoutReminder(
       await sendPayoutReminderSms(userDetails.phone, circleName, amount, hoursUntilPayout);
       sent = true;
     } catch (error) {
-      console.error(`Failed to send payout reminder SMS to ${userId}:`, error);
+      logger.error(`Failed to send payout reminder SMS to ${userId}:`, error);
     }
   }
 
@@ -73,7 +74,7 @@ export async function notifyPayoutReminder(
     try {
       await sendPayoutReminderEmail(userDetails.email, userDetails.displayName, circleName, amount, hoursUntilPayout, userId);
     } catch (error) {
-      console.error(`Failed to send payout reminder email to ${userId}:`, error);
+      logger.error(`Failed to send payout reminder email to ${userId}:`, error);
     }
   }
 }
@@ -100,7 +101,7 @@ export async function notifyContributionReminder(
       await sendContributionReminderSms(userDetails.phone, circleName, amount, hoursLeft);
       sent = true;
     } catch (error) {
-      console.error(`Failed to send contribution reminder SMS to ${userId}:`, error);
+      logger.error(`Failed to send contribution reminder SMS to ${userId}:`, error);
     }
   }
 
@@ -110,7 +111,7 @@ export async function notifyContributionReminder(
       const dueDate = new Date(Date.now() + hoursLeft * 60 * 60 * 1000);
       await sendContributionReminderEmail(userDetails.email, userDetails.displayName, circleName, amount, "USDC", dueDate, userId);
     } catch (error) {
-      console.error(`Failed to send contribution reminder email to ${userId}:`, error);
+      logger.error(`Failed to send contribution reminder email to ${userId}:`, error);
     }
   }
 }
@@ -136,7 +137,7 @@ export async function notifyPayoutProcessed(
         await sendPayoutProcessedSms(userDetails.phone, circleName, amount, recipientName);
         sent = true;
       } catch (error) {
-        console.error(`Failed to send payout processed SMS to ${userId}:`, error);
+        logger.error(`Failed to send payout processed SMS to ${userId}:`, error);
       }
     }
 
@@ -145,7 +146,7 @@ export async function notifyPayoutProcessed(
       try {
         await sendPayoutProcessedEmail(userDetails.email, userDetails.displayName, circleName, amount, recipientName, userId);
       } catch (error) {
-        console.error(`Failed to send payout processed email to ${userId}:`, error);
+        logger.error(`Failed to send payout processed email to ${userId}:`, error);
       }
     }
   });
@@ -172,7 +173,7 @@ export async function notifyMissedContribution(
       await sendMissedContributionSms(userDetails.phone, circleName, amount);
       sent = true;
     } catch (error) {
-      console.error(`Failed to send missed contribution SMS to ${userId}:`, error);
+      logger.error(`Failed to send missed contribution SMS to ${userId}:`, error);
     }
   }
 
@@ -181,7 +182,7 @@ export async function notifyMissedContribution(
     try {
       await sendMissedContributionEmail(userDetails.email, userDetails.displayName, circleName, amount, userId);
     } catch (error) {
-      console.error(`Failed to send missed contribution email to ${userId}:`, error);
+      logger.error(`Failed to send missed contribution email to ${userId}:`, error);
     }
   }
 }
@@ -206,7 +207,7 @@ export async function notifyContributionReceived(
       await sendContributionReceivedSms(userDetails.phone, circleName, amount, cycleNumber);
       sent = true;
     } catch (error) {
-      console.error(`Failed to send contribution received SMS to ${userId}:`, error);
+      logger.error(`Failed to send contribution received SMS to ${userId}:`, error);
     }
   }
 
@@ -215,7 +216,7 @@ export async function notifyContributionReceived(
     try {
       await sendContributionReceivedEmail(userDetails.email, userDetails.displayName, circleName, amount, cycleNumber, userId);
     } catch (error) {
-      console.error(`Failed to send contribution received email to ${userId}:`, error);
+      logger.error(`Failed to send contribution received email to ${userId}:`, error);
     }
   }
 }
@@ -238,7 +239,7 @@ export async function notifyJoinRequestApproved(
       await sendJoinRequestApprovedSms(userDetails.phone, circleName);
       sent = true;
     } catch (error) {
-      console.error(`Failed to send join request approved SMS to ${userId}:`, error);
+      logger.error(`Failed to send join request approved SMS to ${userId}:`, error);
     }
   }
 
@@ -247,7 +248,7 @@ export async function notifyJoinRequestApproved(
     try {
       await sendJoinRequestApprovedEmail(userDetails.email, userDetails.displayName, circleName, userId);
     } catch (error) {
-      console.error(`Failed to send join request approved email to ${userId}:`, error);
+      logger.error(`Failed to send join request approved email to ${userId}:`, error);
     }
   }
 }
@@ -270,7 +271,7 @@ export async function notifyJoinRequestRejected(
       await sendJoinRequestRejectedSms(userDetails.phone, circleName);
       sent = true;
     } catch (error) {
-      console.error(`Failed to send join request rejected SMS to ${userId}:`, error);
+      logger.error(`Failed to send join request rejected SMS to ${userId}:`, error);
     }
   }
 
@@ -279,7 +280,7 @@ export async function notifyJoinRequestRejected(
     try {
       await sendJoinRequestRejectedEmail(userDetails.email, userDetails.displayName, circleName, userId);
     } catch (error) {
-      console.error(`Failed to send join request rejected email to ${userId}:`, error);
+      logger.error(`Failed to send join request rejected email to ${userId}:`, error);
     }
   }
 }
@@ -314,7 +315,7 @@ export async function notifyAdminOfDefault(
     const message = `Ajosave: A member defaulted in "${circleName}". Penalty of ${penaltyAmount} USDC recorded.`;
     await sendSms(phone, message);
   } catch (error) {
-    console.error(`Failed to notify admin ${adminUserId} about default:`, error);
+    logger.error(`Failed to notify admin ${adminUserId} about default:`, error);
   }
 }
 
@@ -337,7 +338,7 @@ export async function notifyCircleCompleted(
         await sendPayoutProcessedSms(userDetails.phone, circleName, "0", "everyone — the circle is complete!");
         sent = true;
       } catch (error) {
-        console.error(`Failed to send circle completed SMS to ${userId}:`, error);
+        logger.error(`Failed to send circle completed SMS to ${userId}:`, error);
       }
     }
 
@@ -346,7 +347,7 @@ export async function notifyCircleCompleted(
       try {
         await sendCircleCompletedEmail(userDetails.email, userDetails.displayName, circleName, userId);
       } catch (error) {
-        console.error(`Failed to send circle completed email to ${userId}:`, error);
+        logger.error(`Failed to send circle completed email to ${userId}:`, error);
       }
     }
   });
@@ -378,7 +379,7 @@ export async function notifyCircleCancelled(
       }
       sent = true;
     } catch (error) {
-      console.error(`Failed to send circle cancelled SMS to ${userId}:`, error);
+      logger.error(`Failed to send circle cancelled SMS to ${userId}:`, error);
     }
   }
 
@@ -387,7 +388,7 @@ export async function notifyCircleCancelled(
     try {
       await sendCircleCancelledEmail(userDetails.email, userDetails.displayName, circleName, refundAmountUsdc, userId);
     } catch (error) {
-      console.error(`Failed to send circle cancelled email to ${userId}:`, error);
+      logger.error(`Failed to send circle cancelled email to ${userId}:`, error);
     }
   }
 }
@@ -411,7 +412,7 @@ export async function notifyCirclePaused(
         await sendCirclePausedSms(userDetails.phone, circleName);
         sent = true;
       } catch (error) {
-        console.error(`Failed to send circle paused SMS to ${userId}:`, error);
+        logger.error(`Failed to send circle paused SMS to ${userId}:`, error);
       }
     }
 
@@ -420,7 +421,7 @@ export async function notifyCirclePaused(
       try {
         await sendCirclePausedEmail(userDetails.email, userDetails.displayName, circleName, userId);
       } catch (error) {
-        console.error(`Failed to send circle paused email to ${userId}:`, error);
+        logger.error(`Failed to send circle paused email to ${userId}:`, error);
       }
     }
   });
@@ -447,7 +448,7 @@ export async function notifyCircleResumed(
         await sendCircleResumedSms(userDetails.phone, circleName);
         sent = true;
       } catch (error) {
-        console.error(`Failed to send circle resumed SMS to ${userId}:`, error);
+        logger.error(`Failed to send circle resumed SMS to ${userId}:`, error);
       }
     }
 
@@ -456,7 +457,7 @@ export async function notifyCircleResumed(
       try {
         await sendCircleResumedEmail(userDetails.email, userDetails.displayName, circleName, userId);
       } catch (error) {
-        console.error(`Failed to send circle resumed email to ${userId}:`, error);
+        logger.error(`Failed to send circle resumed email to ${userId}:`, error);
       }
     }
   });
@@ -486,7 +487,7 @@ export async function notifyInviteRedeemed(
         issuerId
       );
     } catch (error) {
-      console.error(`Failed to send invite redeemed email to ${issuerId}:`, error);
+      logger.error(`Failed to send invite redeemed email to ${issuerId}:`, error);
     }
   }
 }
@@ -496,14 +497,14 @@ export async function notifyInviteRedeemed(
  */
 export async function notifyWaitlistSpotOpened(
   userId: string,
-  circleName: string
+  circleName: string,
+  joinLink: string
 ): Promise<void> {
-  if (!(await canSendSms(userId))) return;
-  const phone = await getUserPhone(userId);
-  if (!phone) return;
+  const user = await getUserDetails(userId);
+  if (!user?.smsNotificationsEnabled || !user.phone) return;
   try {
-    await sendWaitlistSpotOpenedSms(phone, circleName);
+    await sendWaitlistSpotOpenedSms(user.phone, circleName, joinLink);
   } catch (error) {
-    console.error(`Failed to send waitlist notification to ${userId}:`, error);
+    logger.error(`Failed to send waitlist notification to ${userId}:`, error);
   }
 }

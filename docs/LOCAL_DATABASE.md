@@ -79,3 +79,18 @@ psql "$DATABASE_URL" -c "\dt"
 
 You should see `circles`, `members`, `contributions`, `payouts`, `users`,
 and the other tables defined in `docs/schema.sql`.
+
+## Query timeouts
+
+To keep slow or locked queries from exhausting the connection pool, every
+connection sets a PostgreSQL `statement_timeout` (see `src/lib/db.ts`):
+
+| Pool | Used by | Default | Env var |
+|------|---------|---------|---------|
+| API pool | `query()`, `transaction()` | 10 s | `DB_STATEMENT_TIMEOUT_MS` |
+| Background pool | `backgroundQuery()` (analytics, exports) | 60 s | `DB_BACKGROUND_STATEMENT_TIMEOUT_MS` |
+
+The background pool size is controlled by `DB_BACKGROUND_POOL_SIZE` (default 3).
+
+When a statement exceeds its timeout PostgreSQL cancels it (SQLSTATE `57014`);
+the db layer converts this into a `503 SERVICE_UNAVAILABLE` response for the client.

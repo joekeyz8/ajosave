@@ -1,5 +1,7 @@
+import logger from "@/lib/logger";
 import { query } from "@/lib/db";
 import { getCircleById } from "./circle.service";
+import { notifyWaitlistSpotOpened } from "./notification.service";
 
 export interface WaitlistStatus {
   isOnWaitlist: boolean;
@@ -107,4 +109,54 @@ export async function getWaitlistStatus(circleId: string, userId: string): Promi
     isOnWaitlist: position !== null,
     position,
   };
+}
+
+/**
+ * Admin override of automatic promotion order (Issue #434).
+ * Higher priority is promoted first; ties fall back to FIFO by joined_at.
+ */
+export async function setWaitlistPriority(
+  circleId: string,
+  userId: string,
+  priority: number
+): Promise<void> {
+  const { rowCount } = await query(
+    "UPDATE circle_waitlist SET priority = $3 WHERE circle_id = $1 AND user_id = $2",
+    [circleId, userId, priority]
+  );
+  if (!rowCount) throw new Error("User is not on the waitlist");
+}
+
+/**
+ * Promote the next eligible waitlisted user when a slot opens (Issue #434).
+ * Selection and marking happen in one transaction with a row lock so two
+ * concurrent exits can never promote the same user twice.
+ * Returns the promoted user ID, or null when the waitlist is empty.
+ */
+export async function promoteNextWaitlistMember(circleId: string): Promise<string | null> {
+  const userId = await transaction(async (q) => {
+    const { rows } = await q<{ user_id: string }>(
+      `SELECT user_id FROM circle_waitlist
+       WHERE circle_id = $1 AND promoted_at IS NULL
+       ORDER BY priority DESC, joined_at ASC
+       LIMIT 1
+       FOR UPDATE SKIP LOCKED`,
+      [circleId]
+    );
+    const next = rows[0]?.user_id ?? null;
+    if (next) {
+      await q(
+        "UPDATE circle_waitlist SET promoted_at = NOW() WHERE circle_id = $1 AND user_id = $2",
+        [circleId, next]
+      );
+    }
+    return next;
+  });
+
+  if (userId) {
+    const circle = await getCircleById(circleId);
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    await notifyWaitlistSpotOpened(userId, circle?.name ?? "your circle", `${appUrl}/circles/${circleId}/join`);
+  }
+  return userId;
 }

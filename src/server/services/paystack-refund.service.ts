@@ -9,9 +9,13 @@
 
 import { query } from "@/lib/db";
 import logger from "@/lib/logger";
+import { outboundPolicy, safeFetch } from "@/lib/ssrf";
 
 const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_API_URL = "https://api.paystack.co";
+
+/** SSRF policy for Paystack — allow only the official API hostname. */
+const paystackPolicy = outboundPolicy({ allowedHosts: ["api.paystack.co"] });
 
 interface PaystackRefundResponse {
   status: boolean;
@@ -48,17 +52,21 @@ export async function initiatePaystackRefund(
   const amountKobo = Math.round(amountUsdc * 100);
 
   try {
-    const response = await fetch(`${PAYSTACK_API_URL}/refund`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
-        "Content-Type": "application/json",
+    const response = await safeFetch(
+      `${PAYSTACK_API_URL}/refund`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${PAYSTACK_SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          transaction: transactionReference,
+          amount: amountKobo,
+        }),
       },
-      body: JSON.stringify({
-        transaction: transactionReference,
-        amount: amountKobo,
-      }),
-    });
+      paystackPolicy
+    );
 
     const result: PaystackRefundResponse = await response.json();
 

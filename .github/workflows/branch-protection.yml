@@ -7,10 +7,17 @@ on:
     paths:
       - ".github/workflows/branch-protection.yml"
 
+concurrency:
+  group: branch-protection
+  cancel-in-progress: true
+
 jobs:
   protect:
-    name: Enforce main branch protection
+    name: Enforce branch protection (${{ matrix.branch }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        branch: [main, develop]
     permissions:
       contents: read
       administration: write
@@ -22,18 +29,24 @@ jobs:
           gh api \
             --method PUT \
             -H "Accept: application/vnd.github+json" \
-            /repos/${{ github.repository }}/branches/main/protection \
+            /repos/${{ github.repository }}/branches/${{ matrix.branch }}/protection \
             --input - <<'EOF'
           {
             "required_status_checks": {
               "strict": true,
-              "contexts": ["Lint & Type Check", "Unit Tests", "Next.js Build"]
+              "contexts": [
+                "Lint & Type Check",
+                "Unit Tests",
+                "Next.js Build",
+                "CodeQL Analysis (JavaScript/TypeScript)",
+                "npm Dependency Audit"
+              ]
             },
-            "enforce_admins": false,
+            "enforce_admins": true,
             "required_pull_request_reviews": {
               "required_approving_review_count": 1,
               "dismiss_stale_reviews": true,
-              "require_code_owner_reviews": false
+              "require_code_owner_reviews": true
             },
             "restrictions": null,
             "allow_force_pushes": false,
@@ -42,4 +55,4 @@ jobs:
             "required_conversation_resolution": true
           }
           EOF
-          echo "Branch protection applied to main."
+          echo "Branch protection applied to ${{ matrix.branch }}."

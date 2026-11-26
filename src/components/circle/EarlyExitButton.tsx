@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
+import { useCircleInvalidation } from "@/lib/queryInvalidation";
 
 interface EarlyExitButtonProps {
   circleId: string;
@@ -10,6 +11,7 @@ interface EarlyExitButtonProps {
 
 export function EarlyExitButton({ circleId }: EarlyExitButtonProps) {
   const router = useRouter();
+  const { invalidateCircle } = useCircleInvalidation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
@@ -28,6 +30,7 @@ export function EarlyExitButton({ circleId }: EarlyExitButtonProps) {
       if (!data.success) throw new Error(data.error || "Failed to submit exit request");
       setSuccess(true);
       setShowConfirm(false);
+      invalidateCircle(circleId);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");

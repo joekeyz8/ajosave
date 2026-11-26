@@ -1,7 +1,8 @@
+import logger from "@/lib/logger";
 import { transaction } from "@/lib/db";
+import { decrypt } from "@/lib/encryption";
 import { sendEmail } from "@/lib/email";
 import { logAuditAction } from "./audit.service";
-import { serverConfig } from "@/server/config";
 import { getRedis } from "@/lib/redis";
 import { revokeAllSessions } from "@/lib/sessions";
 
@@ -30,7 +31,22 @@ export async function deleteUserData(userId: string): Promise<{ email: string | 
       [userId]
     );
     if (!rows[0]) throw new Error("User not found");
-    const { email, phone } = rows[0];
+    const { email: encryptedEmail, phone: encryptedPhone } = rows[0];
+
+    // Decrypt before use — phone keyed Redis state uses the plaintext number
+    let email: string | null = null;
+    let phone: string | null = null;
+    try {
+      if (encryptedEmail) email = decrypt(encryptedEmail);
+    } catch {
+      // already anonymized or plaintext; use as-is for the confirmation email
+      email = encryptedEmail;
+    }
+    try {
+      if (encryptedPhone && !encryptedPhone.startsWith("deleted-")) phone = decrypt(encryptedPhone);
+    } catch {
+      phone = encryptedPhone;
+    }
 
     // Anonymize PII — preserve id, role, reputation_score, created_at for audit
     await q(
@@ -52,12 +68,181 @@ export async function deleteUserData(userId: string): Promise<{ email: string | 
 
   await purgeAuthResidue(userId, phone);
 
+  // Anonymise associated PII in peripheral tables (referral records, sms_logs).
+  // This is best-effort — failures are logged but do not block the response.
+  await anonymisePeripheralData(userId).catch((err) => {
+    console.error("[user-deletion] Failed to anonymise peripheral data:", err);
+  });
+
   // Audit log (outside transaction — non-critical)
   await logAuditAction(userId, "DELETE_USER", "USER", userId, {
     details: { reason: "GDPR/NDPR user-initiated deletion" },
   }).catch(() => {});
 
   return { email };
+}
+
+/**
+ * Step 1 of a two-phase deletion: mark the user record with `deleted_at`
+ * and revoke sessions immediately, but defer full PII anonymisation to the
+ * background job (`processScheduledDeletions`).
+ *
+ * The background job runs within 24 hours, satisfying GDPR Article 17 /
+ * NDPA Section 34 timelines.
+ *
+ * Issue #427: soft-delete for user accounts (GDPR right to erasure).
+ */
+export async function markUserForDeletion(userId: string): Promise<{ email: string | null }> {
+  // Capture email (for confirmation) and phone (for Redis purge) before we wipe them.
+  const { rows } = await query<{ email: string | null; phone: string | null }>(
+    "SELECT email, phone FROM users WHERE id = $1",
+    [userId]
+  );
+  if (!rows[0]) throw new Error("User not found");
+  const { email, phone } = rows[0];
+
+  // Mark the account as pending deletion and immediately invalidate all tokens.
+  await transaction(async (q) => {
+    await q(
+      `UPDATE users
+         SET deleted_at = NOW()
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [userId]
+    );
+    await q("DELETE FROM refresh_tokens WHERE user_id = $1", [userId]);
+  });
+
+  // Revoke sessions eagerly so the account cannot be used while PII is pending erasure.
+  await purgeAuthResidue(userId, phone);
+
+  await logAuditAction(userId, "DELETE_USER", "USER", userId, {
+    details: { reason: "GDPR/NDPR user-initiated deletion — PII erasure queued" },
+  }).catch(() => {});
+
+  return { email };
+}
+
+/**
+ * Background job: fully anonymise all PII for users whose `deleted_at` is
+ * set but whose `display_name` has not yet been replaced with the tombstone
+ * value (i.e. the PII erasure step has not completed yet).
+ *
+ * This is designed to be called by a cron endpoint (e.g.
+ * POST /api/v1/cron/anonymise-deleted-users) on a schedule that guarantees
+ * execution within 24 hours of deletion.
+ *
+ * Per `docs/privacy-retention-guide.md`:
+ *  - `contributions`, `payouts`, `audit_logs`, `circles` are financial/regulatory
+ *    records and are retained indefinitely (anonymised references only).
+ *  - `sms_logs` rows are deleted immediately (they contain phone numbers).
+ *  - `referrals` rows have the referred_by and referee identifiers nulled.
+ *
+ * Issue #427: soft-delete for user accounts (GDPR right to erasure).
+ */
+export async function processScheduledDeletions(batchSize = 100): Promise<{
+  processed: number;
+  succeeded: number;
+  failed: number;
+}> {
+  // Find users whose deletion is marked but PII has not yet been wiped.
+  // We detect "not yet wiped" by checking for display_name that does NOT
+  // start with the "deleted-user-" tombstone prefix.
+  const { rows: pendingUsers } = await query<{ id: string; phone: string | null }>(
+    `SELECT id, phone
+       FROM users
+      WHERE deleted_at IS NOT NULL
+        AND (display_name NOT LIKE 'deleted-user-%' OR display_name IS NULL)
+      ORDER BY deleted_at ASC
+      LIMIT $1`,
+    [batchSize]
+  );
+
+  const result = { processed: 0, succeeded: 0, failed: 0 };
+
+  for (const user of pendingUsers) {
+    result.processed++;
+    try {
+      await anonymiseUser(user.id, user.phone);
+      result.succeeded++;
+    } catch (err) {
+      result.failed++;
+      console.error(`[user-deletion] Failed to anonymise user ${user.id}:`, err);
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Fully anonymise a single user's PII fields and clean up peripheral tables.
+ * Financial records (contributions, payouts) are retained per retention policy.
+ */
+async function anonymiseUser(userId: string, phone: string | null): Promise<void> {
+  const anonymizedName = `deleted-user-${userId.slice(0, 8)}`;
+
+  await transaction(async (q) => {
+    // Anonymise core PII on the users row.
+    await q(
+      `UPDATE users
+         SET phone              = $1,
+             display_name       = $2,
+             email              = NULL,
+             stellar_public_key = NULL
+       WHERE id = $3`,
+      [`deleted-${userId}`, anonymizedName, userId]
+    );
+
+    // Delete SMS logs — they contain phone numbers and are not financial records.
+    await q("DELETE FROM sms_logs WHERE user_id = $1", [userId]);
+
+    // Anonymise referral records: null out both sides of the referral link
+    // so the user's identity is not recoverable, while preserving the row for
+    // aggregate stats (referral count, reward amounts).
+    await q(
+      `UPDATE referrals
+         SET referrer_id = NULL
+       WHERE referrer_id = $1`,
+      [userId]
+    );
+    await q(
+      `UPDATE referrals
+         SET referred_id = NULL
+       WHERE referred_id = $1`,
+      [userId]
+    );
+
+    // audit_logs and financial records (contributions, payouts, circles) are
+    // intentionally NOT deleted per docs/privacy-retention-guide.md. The
+    // user's id still appears in those rows as an opaque identifier — it is
+    // no longer linkable to a real person once the users row is anonymised.
+  });
+
+  // Purge any residual Redis state keyed by phone.
+  if (phone && !phone.startsWith("deleted-")) {
+    await purgeAuthResidue(userId, phone).catch((err) => {
+      console.error("[user-deletion] Redis cleanup failed:", err);
+    });
+  }
+
+  await logAuditAction(userId, "DELETE_USER", "USER", userId, {
+    details: { reason: "GDPR/NDPR — PII erasure completed by background job" },
+  }).catch(() => {});
+}
+
+/**
+ * Anonymise PII in tables outside the main `users` row.
+ * Called synchronously by `deleteUserData` (the immediate-erasure path).
+ */
+async function anonymisePeripheralData(userId: string): Promise<void> {
+  await transaction(async (q) => {
+    await q("DELETE FROM sms_logs WHERE user_id = $1", [userId]);
+    await q("UPDATE referrals SET referrer_id = NULL WHERE referrer_id = $1", [userId]);
+    await q("UPDATE referrals SET referred_id = NULL WHERE referred_id = $1", [userId]);
+  });
 }
 
 /** Redis keys that hold state for a phone number (see otp routes, lockout and otp-abuse). */
@@ -79,7 +264,7 @@ async function purgeAuthResidue(userId: string, phone: string | null): Promise<v
   try {
     await revokeAllSessions(userId);
   } catch (err) {
-    console.error("[user-deletion] Failed to revoke sessions:", err);
+    logger.error("[user-deletion] Failed to revoke sessions:", err);
   }
 
   if (!phone || phone.startsWith("deleted-")) return;
@@ -87,7 +272,7 @@ async function purgeAuthResidue(userId: string, phone: string | null): Promise<v
     const redis = await getRedis();
     await redis.del(phoneKeyedRedisKeys(phone));
   } catch (err) {
-    console.error("[user-deletion] Failed to purge phone-keyed Redis state:", err);
+    logger.error("[user-deletion] Failed to purge phone-keyed Redis state:", err);
   }
 }
 

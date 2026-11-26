@@ -70,3 +70,10 @@
   font-size: var(--text-sm);
   padding: var(--space-4) 0;
 }
+
+/* Total record count label above the contribution history table */
+.totalCount {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-3);
+}

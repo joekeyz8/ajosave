@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendOtp } from "@/lib/sms";
-import { rateLimit, withErrorHandler, withRateLimit } from "@/server/middleware";
+import { withErrorHandler } from "@/server/middleware";
 import { sendOtpSchema } from "@/types/schemas";
 import type { ApiResponse } from "@/types";
 import { getRedis } from "@/lib/redis";
 import { getLockoutStatus } from "@/lib/lockout";
-import { checkOtpSendAllowed, getClientIp, releaseOtpSendCooldown } from "@/lib/otp-abuse";
+import { checkOtpSendAllowed, getClientIp } from "@/lib/otp-abuse";
 
 interface SendOtpResponse {
   message: string;
@@ -20,13 +20,16 @@ interface SendOtpResponse {
 
 /**
  * POST /api/v1/auth/send-otp
- * Sends an OTP to a phone number with brute-force protection.
+ * Sends an OTP to a phone number with rate limiting and brute-force protection.
  * 
- * Acceptance Criteria:
- * ✅ Max 5 OTP attempts per phone number per 10 minutes
- * ✅ Account locked for 30 minutes after 5 failures
- * ✅ Lockout status returned in API response
- * ✅ Attempts tracked in Redis
+ * Rate Limits (Issue #423):
+ * - Maximum 3 OTP requests per phone number per 10 minutes
+ * - Maximum 10 OTP requests per IP per 10 minutes
+ * - Exceeding limits returns 429 with Retry-After header
+ * 
+ * Brute-Force Protection (Issue #3):
+ * - Account locked for 30 minutes after 5 failed verification attempts
+ * - Lockout status returned in API response
  * 
  * Request body:
  * {
@@ -40,6 +43,15 @@ interface SendOtpResponse {
  *     "message": "OTP sent successfully"
  *   }
  * }
+ * 
+ * Rate Limited Response (429):
+ * {
+ *   "success": false,
+ *   "error": "Too many OTP requests. Please wait X seconds and try again.",
+ *   "data": null
+ * }
+ * 
+ * Headers: Retry-After: X (seconds)
  * 
  * Locked Response (423):
  * {
@@ -56,8 +68,7 @@ interface SendOtpResponse {
  *   }
  * }
  */
-export const POST = withRateLimit(
-  withErrorHandler(async (req: NextRequest) => {
+export const POST = withErrorHandler(async (req: NextRequest) => {
   const body = await req.json();
   const parsed = sendOtpSchema.safeParse(body);
   if (!parsed.success) {
@@ -69,7 +80,7 @@ export const POST = withRateLimit(
 
   const { phone } = parsed.data;
 
-  // Check for account lockout (brute-force protection)
+  // 1. Check for account lockout (brute-force protection from failed verify attempts)
   const lockoutStatus = await getLockoutStatus(phone);
   if (lockoutStatus.isLocked) {
     return NextResponse.json<ApiResponse<SendOtpResponse>>(
@@ -85,32 +96,28 @@ export const POST = withRateLimit(
     );
   }
 
-  const rl = await rateLimit(`otp:${phone}`, 3, 10 * 60 * 1000);
-  if (!rl.allowed) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Too many requests. Please wait before requesting another OTP." },
-      { status: 429 }
-    );
-  }
-
-  const sendDecision = await checkOtpSendAllowed(phone, getClientIp(req.headers));
+  // 2. Check per-phone and per-IP OTP send rate limits (Issue #423)
+  const clientIp = getClientIp(req.headers);
+  const sendDecision = await checkOtpSendAllowed(phone, clientIp);
   if (!sendDecision.allowed) {
     return NextResponse.json<ApiResponse<never>>(
       { success: false, error: sendDecision.message },
-      { status: 429, headers: { "Retry-After": String(sendDecision.retryAfterSeconds) } }
+      { 
+        status: 429, 
+        headers: { "Retry-After": String(sendDecision.retryAfterSeconds) } 
+      }
     );
   }
 
+  // 3. Send OTP via SMS
   let otp: string;
   try {
     otp = await sendOtp(phone);
   } catch (err) {
-    // The code never reached the user: free the cooldown so they can retry at once.
-    await releaseOtpSendCooldown(phone);
     throw err;
   }
   
-  // Store OTP in Redis with 10-minute expiry
+  // 4. Store OTP in Redis with 10-minute expiry
   const redis = await getRedis();
   await redis.set(`otp:${phone}`, otp, { EX: 600 });
 
@@ -120,6 +127,4 @@ export const POST = withRateLimit(
     success: true,
     data: { message: "OTP sent successfully" },
   });
-  }),
-  { limit: 5, windowMs: 60_000 }
-);
+});

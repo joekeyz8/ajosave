@@ -105,3 +105,26 @@ sha256sum contracts/target/wasm32-unknown-unknown/release/*.wasm
 - Only the `admin` address set during `initialize` can call `upgrade`.
 - No data migration is needed unless the new version changes storage key layouts — in that case add a `migrate()` function before calling `upgrade`.
 - For mainnet upgrades, test on testnet first and have the admin multisig approve the transaction.
+
+## Admin Rotation vs. Upgrade Timelock (Issue #443)
+
+**Threat:** if the admin address could change between `propose_upgrade` and
+`upgrade`, a newly rotated-in admin could inherit or replace the pending
+proposal and shorten the window members have to react to a WASM swap.
+
+**Mitigation:** admin rotation is frozen while an upgrade is pending.
+
+- `propose_admin` and `accept_admin` panic with
+  `"admin change blocked while upgrade is pending"` whenever
+  `PendingUpgradeHash` is set — including an admin proposed *before* the
+  upgrade was proposed.
+- To rotate the admin, the current admin must first `cancel_upgrade`. Any
+  subsequent upgrade by the new admin requires a fresh `propose_upgrade`,
+  which starts a new full 48-hour timelock.
+- The timelock is tied to the proposed WASM hash and its `PendingUpgradeTime`,
+  never to the proposer, so no admin can execute an upgrade earlier than
+  `UPGRADE_TIMELOCK_SECS` after it was proposed.
+
+Covered by `test_admin_rotation_blocked_during_pending_upgrade`,
+`test_accept_admin_blocked_during_pending_upgrade` and
+`test_admin_rotation_restarts_timelock` in `src/integration_tests.rs`.

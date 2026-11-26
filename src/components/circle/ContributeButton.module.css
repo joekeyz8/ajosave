@@ -52,6 +52,16 @@
   justify-content: flex-end;
 }
 
+/* Explicit focus ring for all interactive elements inside the modal.
+   The .btn rule in components.css covers Button components; this targets
+   any bare button/anchor that may appear in the modal overlay. */
+.modal button:focus-visible,
+.modal a:focus-visible {
+  outline: 2px solid var(--color-brand-primary, #0f7a4a);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(15, 122, 74, 0.25);
+}
+
 .disclaimer {
   font-size: 0.75rem;
   color: var(--color-muted, #94a3b8);
@@ -85,5 +95,28 @@
 .rateStale {
   color: var(--color-warning, #fb923c);
   font-size: 0.75rem;
+}
+
+/* Optimistic contribution count */
+.contribCount {
+  font-size: 0.8rem;
+  color: var(--color-text-secondary, #94a3b8);
+  margin-bottom: 0.4rem;
+}
+
+/* Inline spinner shown inside the button during in-flight requests */
+.spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.65s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 

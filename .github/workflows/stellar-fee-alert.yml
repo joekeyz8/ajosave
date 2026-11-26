@@ -1,0 +1,43 @@
+name: Stellar Daily Fee Cost Alert
+
+on:
+  schedule:
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stellar-daily-fee-alert
+  cancel-in-progress: false
+
+jobs:
+  monitor-fees:
+    name: Monitor platform-account transaction fees
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      STELLAR_NETWORK: ${{ vars.STELLAR_NETWORK }}
+      STELLAR_HORIZON_URL: ${{ vars.STELLAR_HORIZON_URL }}
+      STELLAR_FEE_MONITOR_ACCOUNT: ${{ vars.STELLAR_FEE_MONITOR_ACCOUNT }}
+      STELLAR_DAILY_FEE_THRESHOLD_XLM: ${{ vars.STELLAR_DAILY_FEE_THRESHOLD_XLM }}
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Run fee monitor unit tests
+        run: node --test scripts/monitor-stellar-fees.node.test.mjs
+      - name: Check required configuration
+        shell: bash
+        run: |
+          for name in STELLAR_HORIZON_URL STELLAR_FEE_MONITOR_ACCOUNT STELLAR_DAILY_FEE_THRESHOLD_XLM SLACK_WEBHOOK_URL; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing required GitHub variable/secret: $name"
+              exit 1
+            fi
+          done
+      - name: Query Horizon and alert when daily fees exceed the threshold
+        run: node scripts/monitor-stellar-fees.mjs

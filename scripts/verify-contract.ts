@@ -5,9 +5,15 @@
  * Calls get_state() on the deployed Ajo contract and verifies it returns
  * a valid response. Fails with exit code 1 if the contract is unresponsive.
  * Runs for both testnet and mainnet based on STELLAR_NETWORK env var.
+ *
+ * WASM hash verification (Issue #463): fetches the deployed WASM, computes its
+ * SHA-256 and compares it with the locally built WASM (or EXPECTED_WASM_HASH).
+ * Exits with code 1 on mismatch so the CI deploy step fails.
  */
 import { execSync } from "child_process";
+import * as crypto from "crypto";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 
 const network = process.env.STELLAR_NETWORK ?? "testnet";
@@ -64,6 +70,36 @@ try {
     throw new Error("get_state() returned empty response");
   }
 
+  // Compare deployed WASM hash with the locally built / expected hash
+  const sha256 = (file: string) =>
+    crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  const localWasm = path.resolve(
+    __dirname,
+    "../contracts/target/wasm32-unknown-unknown/release/stellar_ajo.wasm"
+  );
+  const expectedHash = (
+    process.env.EXPECTED_WASM_HASH ?? (fs.existsSync(localWasm) ? sha256(localWasm) : "")
+  ).toLowerCase();
+  if (!expectedHash) {
+    throw new Error("No local WASM build found and EXPECTED_WASM_HASH is not set");
+  }
+  const fetchedWasm = path.join(os.tmpdir(), `ajo-deployed-${Date.now()}.wasm`);
+  execSync(
+    `stellar contract fetch \
+      --id ${contractId} \
+      --rpc-url ${rpcUrl} \
+      --network-passphrase "${passphrase}" \
+      --out-file ${fetchedWasm}`,
+    { stdio: ["pipe", "pipe", "pipe"] }
+  );
+  const deployedHash = sha256(fetchedWasm);
+  fs.unlinkSync(fetchedWasm);
+  console.log(`   Expected WASM hash : ${expectedHash}`);
+  console.log(`   Deployed WASM hash : ${deployedHash}`);
+  if (deployedHash !== expectedHash) {
+    throw new Error("Deployed WASM hash does not match expected hash");
+  }
+
   // Log contract ID to deploy artifacts
   const artifactsDir = path.resolve(__dirname, "../deploy-artifacts");
   if (!fs.existsSync(artifactsDir)) fs.mkdirSync(artifactsDir, { recursive: true });
@@ -73,6 +109,7 @@ try {
     network,
     verifiedAt: new Date().toISOString(),
     getStateResponse: raw,
+    wasmHash: deployedHash,
   };
   const artifactPath = path.join(artifactsDir, `contract-${network}.json`);
   fs.writeFileSync(artifactPath, JSON.stringify(artifact, null, 2));

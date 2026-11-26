@@ -7,7 +7,7 @@ import {
   isValidCategory,
   VALID_CATEGORIES,
 } from "@/server/services/support.service";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import { badRequest } from "@/lib/errors";
 import type { ApiResponse } from "@/types";
 import type { SupportTicket } from "@/server/services/support.service";
@@ -26,7 +26,7 @@ import type { SupportTicket } from "@/server/services/support.service";
  *
  * Returns 201 with the created ticket on success.
  */
-export const POST = withErrorHandler(async (req: NextRequest) => {
+export const POST = withRouteRateLimit(withErrorHandler(async (req: NextRequest) => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -83,14 +83,14 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
     { success: true, data: ticket },
     { status: 201 }
   );
-});
+}));
 
 /**
  * GET /api/v1/support
  *
  * List all support tickets submitted by the authenticated user, newest first.
  */
-export const GET = withErrorHandler(async () => {
+export const GET = withRouteRateLimit(withErrorHandler(async () => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -106,4 +106,4 @@ export const GET = withErrorHandler(async () => {
     { success: true, data: tickets },
     { status: 200 }
   );
-});
+}));

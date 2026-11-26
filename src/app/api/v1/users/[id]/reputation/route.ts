@@ -3,14 +3,14 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getReputationStats, verifyReputation } from "@/lib/reputation";
 import { query } from "@/lib/db";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import type { ApiResponse } from "@/types";
 
 /**
  * GET /api/users/[id]/reputation
  * Fetch on-chain reputation for a user
  */
-export const GET = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
+export const GET = withRouteRateLimit(withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -68,4 +68,4 @@ export const GET = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
       ...(verify && { isVerified }),
     },
   });
-});
+}));

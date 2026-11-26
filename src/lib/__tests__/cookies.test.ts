@@ -29,10 +29,10 @@ describe("refreshTokenCookieOptions", () => {
   const setEnv = (v: string) => Object.defineProperty(process.env, "NODE_ENV", { value: v, configurable: true });
   afterEach(() => setEnv(original as string));
 
-  it("is HttpOnly, SameSite=Lax, path=/ with a 7 day lifetime by default", () => {
+  it("is HttpOnly, SameSite=Strict, path=/ with a 7 day lifetime by default", () => {
     expect(refreshTokenCookieOptions()).toMatchObject({
       httpOnly: true,
-      sameSite: "lax",
+      sameSite: "strict",
       path: "/",
       maxAge: REFRESH_TOKEN_MAX_AGE_SECONDS,
     });
@@ -54,7 +54,7 @@ describe("setRefreshTokenCookie / clearRefreshTokenCookie", () => {
     expect(res.cookies.set).toHaveBeenCalledWith(
       REFRESH_TOKEN_COOKIE,
       "tok",
-      expect.objectContaining({ httpOnly: true, sameSite: "lax", path: "/", maxAge: REFRESH_TOKEN_MAX_AGE_SECONDS }),
+      expect.objectContaining({ httpOnly: true, sameSite: "strict", path: "/", maxAge: REFRESH_TOKEN_MAX_AGE_SECONDS }),
     );
     expect(res.headers.set).toHaveBeenCalledWith("Cache-Control", "no-store");
   });
@@ -65,7 +65,7 @@ describe("setRefreshTokenCookie / clearRefreshTokenCookie", () => {
     expect(res.cookies.set).toHaveBeenCalledWith(
       REFRESH_TOKEN_COOKIE,
       "",
-      expect.objectContaining({ httpOnly: true, sameSite: "lax", path: "/", maxAge: 0 }),
+      expect.objectContaining({ httpOnly: true, sameSite: "strict", path: "/", maxAge: 0 }),
     );
     expect(res.headers.set).toHaveBeenCalledWith("Cache-Control", "no-store");
   });

@@ -50,5 +50,54 @@
     "cancel": "Fagilé",
     "confirm": "Jẹ́rìísí",
     "back": "Padà"
+  },
+  "pagination": {
+    "loading": "Ń gbéru àwọn ìdìpọ̀ síi…",
+    "allLoaded": "O ti rí gbogbo àwọn ìdìpọ̀.",
+    "backToTop": "Padà sí òkè"
+  },
+  "circleCompletion": {
+    "heading": "Ìdìpọ̀ Parí! 🏆",
+    "sub": "Gbogbo ọmọ ẹgbẹ́ ti gba ìṣẹ̀ wọn. Ó dára púpọ̀ pé ẹ dúró!",
+    "totalSaved": "Àpapọ̀ Tí A Pamọ́",
+    "members": "Àwọn Ọmọ Ẹgbẹ́",
+    "cyclesCompleted": "Àwọn Ìyípadà Tí A Parí",
+    "shareTwitter": "Pin lórí X (Twitter)",
+    "shareWhatsApp": "Pin lórí WhatsApp",
+    "startNew": "Ṣẹ̀dá Ìdìpọ̀ Tuntun",
+    "shareText": "🎉 Ìdìpọ̀ ìfowópamọ́ wa \"{name}\" ní Ajosave parí! Àwọn ọmọ ẹgbẹ́ {count} pamọ́ {symbol}{total} pọ̀. Darapọ̀ mọ́ èyí tó ń bò ní ajosave.app"
+  },
+  "dispute": {
+    "title": "Gbé Ẹsùn Kalẹ̀",
+    "typeLabel": "Irú Ẹsùn",
+    "typeMissedPayout": "Ìṣẹ̀ Tí A Fò",
+    "typeWrongAmount": "Iye Tí Kò Tọ́",
+    "typeOther": "Ìdílé Míìràn",
+    "descriptionLabel": "Àpèjúwe",
+    "descriptionPlaceholder": "Ṣàpèjúwe ìṣòro náà ní ẹ̀kúnrẹ́rẹ́…",
+    "evidenceLabel": "Ẹ̀rí (kò pọn dandan)",
+    "evidencePlaceholder": "Àwọn ID ìdúnàádúrà, àpèjúwe àwọn àwòrán, tàbí ìpín míìràn tó ń ṣe àtìlẹyìn…",
+    "paystackLabel": "Ìtọ́kasí Paystack (kò pọn dandan)",
+    "paystackPlaceholder": "fún àpẹẹrẹ, 1234567890",
+    "submit": "Firanṣẹ́ Ẹsùn",
+    "errorFallback": "Kò ṣeéṣe láti ṣẹ̀dá ẹsùn",
+    "errorGeneric": "Nǹkan kan ṣẹlẹ̀"
+  },
+  "walletMismatch": {
+    "title": "A rí àìbáradé àpamọ́wọ̀",
+    "description": "Àpamọ́wọ̀ tó ti sopọ̀ kò bára àdírẹ́sì Stellar tó forúkọsílẹ̀ sí àkọọ́lẹ̀ rẹ mu. Yí àpamọ́wọ̀ padà tàbí ṣedínkù ṣáájú ìṣe eyikeyi.",
+    "expected": "Tí a retí:",
+    "connected": "Tó ti sopọ̀:",
+    "addressComparison": "Àfiwé àdírẹ́sì",
+    "switchAriaLabel": "Yí padà sí àpamọ́wọ̀ tí a retí",
+    "disconnectAriaLabel": "Ṣedínkù àpamọ́wọ̀ lọwọlọwọ",
+    "switchButton": "Yí àpamọ́wọ̀ padà",
+    "disconnectButton": "Ṣedínkù",
+    "resolvedMessage": "A yí àpamọ́wọ̀ padà — ó ti n lo àkọọ́lẹ̀ tó tọ́."
+  },
+  "offline": {
+    "heading": "O kò ní àjọpọ̀ ìntánẹ́ẹ̀tì",
+    "message": "Ṣàyẹ̀wò àjọpọ̀ ìntánẹ́ẹ̀tì rẹ kí o tún gbìyànjú. Àwọn ojú-ewé tó fipamọ́ bíi pẹpẹ iṣẹ rẹ àti àwọn ìdìpọ̀ ṣì wà.",
+    "retry": "Tún Gbìyànjú"
   }
 }

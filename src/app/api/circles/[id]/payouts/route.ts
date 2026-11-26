@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query } from "@/lib/db";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withAuth } from "@/server/middleware";
 import type { ApiResponse } from "@/types";
 
 export interface PayoutHistoryRow {
@@ -12,7 +12,7 @@ export interface PayoutHistoryRow {
   recipientName: string;
 }
 
-export const GET = withErrorHandler(async (
+export const GET = withAuth(withErrorHandler(async (
   _req: NextRequest,
   ctx: unknown
 ) => {
@@ -35,4 +35,4 @@ export const GET = withErrorHandler(async (
   );
 
   return NextResponse.json<ApiResponse<PayoutHistoryRow[]>>({ success: true, data: rows });
-});
+}));

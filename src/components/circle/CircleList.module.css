@@ -1,0 +1,26 @@
+/**
+ * Grid layout shared by the real cards and the loading skeletons.
+ *
+ * Mirrors the circles page grid (`minmax(300px, 1fr)`) so that skeleton cells
+ * and card cells occupy exactly the same footprint — the swap from skeleton to
+ * card produces no cumulative layout shift.
+ */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--space-6);
+}
+
+.error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-12) 0;
+  text-align: center;
+}
+
+.errorText {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}

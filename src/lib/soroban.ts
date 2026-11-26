@@ -2,6 +2,8 @@ import { contract, Keypair, Networks } from "@stellar/stellar-sdk";
 import { serverConfig } from "@/server/config";
 import { wrapWithFeeBump } from "@/lib/stellar";
 import { safeFetch } from "@/lib/ssrf";
+import { sorobanBreaker, CircuitOpenError } from "@/lib/circuit-breaker";
+import { enqueueEvent } from "@/lib/outbox";
 import { execSync } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
@@ -28,6 +30,14 @@ export async function getContractEvents(
   contractId: string,
   startLedger?: number,
   pageSize: number = 100
+): Promise<ContractEvent[]> {
+  return sorobanBreaker.execute(() => fetchContractEvents(contractId, startLedger, pageSize));
+}
+
+async function fetchContractEvents(
+  contractId: string,
+  startLedger: number | undefined,
+  pageSize: number
 ): Promise<ContractEvent[]> {
   const response = await safeFetch(rpcUrl, {
     method: "POST",
@@ -147,9 +157,7 @@ export async function deployAjoContract(): Promise<string> {
   );
 
   if (!fs.existsSync(wasmPath)) {
-    throw new Error(
-      "Ajo contract WASM not found. Run `npm run contract:build` first."
-    );
+    throw new Error("Ajo contract WASM not found. Run `npm run contract:build` first.");
   }
 
   const sourceKey = serverConfig.stellar.serverSecretKey;
@@ -157,9 +165,11 @@ export async function deployAjoContract(): Promise<string> {
     throw new Error("STELLAR_SERVER_SECRET_KEY is not set.");
   }
 
-  const output = execSync(
-    `stellar contract deploy --wasm ${wasmPath} --source ${sourceKey} --rpc-url ${rpcUrl} ${networkFlag}`,
-    { encoding: "utf-8" }
+  const output = await sorobanBreaker.execute(async () =>
+    execSync(
+      `stellar contract deploy --wasm ${wasmPath} --source ${sourceKey} --rpc-url ${rpcUrl} ${networkFlag}`,
+      { encoding: "utf-8" }
+    )
   );
 
   const contractId = output.trim();
@@ -176,27 +186,72 @@ export async function deployAjoContract(): Promise<string> {
  * The contract handles the token transfer; the backend only triggers it.
  *
  * @param contractId - The deployed Ajo contract address for this circle
+ * @param amounts - Optional expected pot vs. amount the recipient will receive;
+ *   checked by the slippage guard before the transaction is submitted (#462)
  * @returns The Soroban transaction hash
  */
-export async function invokeContractPayout(contractId: string): Promise<string> {
-  const keypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
-  const signer = contract.basicNodeSigner(keypair, networkPassphrase);
+export interface CircleState {
+  status: "forming" | "active" | "paused" | "completed";
+  current_cycle: number;
+  total_members: number;
+  joined_members: number;
+  next_payout_at: bigint;
+  admin: string;
+  token: string;
+}
 
+/**
+ * Read the full circle state snapshot via AjoContract.get_circle_state()
+ * (simulation only — no transaction is submitted).
+ */
+export async function getCircleState(contractId: string): Promise<CircleState> {
+  const keypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
   const client = await contract.Client.from({
     contractId,
     networkPassphrase,
     rpcUrl: serverConfig.stellar.sorobanRpcUrl,
     publicKey: keypair.publicKey(),
-    ...signer,
   });
 
-  // payout() takes no args — admin auth is checked inside the contract
   // @ts-expect-error — method generated from contract ABI at runtime
-  const assembled = await client.payout();
-  
-  // Wrap the inner transaction in a platform fee bump so users need no XLM
-  const innerXdr: string = assembled.toXDR();
-  return wrapWithFeeBump(innerXdr);
+  const assembled = await client.get_circle_state();
+  return assembled.result as CircleState;
+}
+
+export async function invokeContractPayout(contractId: string): Promise<string> {
+  try {
+    return await submitContractPayout(contractId);
+  } catch (err) {
+    // Open circuit: queue the payout via the outbox instead of dropping it.
+    if (err instanceof CircuitOpenError) {
+      await enqueueEvent("circle_contract", contractId, "soroban.payout.deferred", { contractId });
+    }
+    throw err;
+  }
+}
+
+/** Invoke payout() through the breaker without outbox deferral (used for replay). */
+export async function submitContractPayout(contractId: string): Promise<string> {
+  return sorobanBreaker.execute(async () => {
+    const keypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
+    const signer = contract.basicNodeSigner(keypair, networkPassphrase);
+
+    const client = await contract.Client.from({
+      contractId,
+      networkPassphrase,
+      rpcUrl: serverConfig.stellar.sorobanRpcUrl,
+      publicKey: keypair.publicKey(),
+      ...signer,
+    });
+
+    // payout() takes no args — admin auth is checked inside the contract
+    // @ts-expect-error — method generated from contract ABI at runtime
+    const assembled = await client.payout();
+
+    // Wrap the inner transaction in a platform fee bump so users need no XLM
+    const innerXdr: string = assembled.toXDR();
+    return wrapWithFeeBump(innerXdr);
+  });
 }
 
 /**
@@ -211,6 +266,53 @@ export async function invokeContractSetPayoutOrder(
   contractId: string,
   payoutOrder: number[]
 ): Promise<string> {
+  return sorobanBreaker.execute(async () => {
+    const keypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
+    const signer = contract.basicNodeSigner(keypair, networkPassphrase);
+
+    const client = await contract.Client.from({
+      contractId,
+      networkPassphrase,
+      rpcUrl: serverConfig.stellar.sorobanRpcUrl,
+      publicKey: keypair.publicKey(),
+      ...signer,
+    });
+
+    // set_payout_order(order: Vec<u32>)
+    // @ts-expect-error — method generated from contract ABI at runtime
+    const assembled = await client.set_payout_order({ order: payoutOrder });
+
+    // Wrap the inner transaction in a platform fee bump so users need no XLM
+    const innerXdr: string = assembled.toXDR();
+    return wrapWithFeeBump(innerXdr);
+  });
+}
+
+/**
+ * Read AjoContract.check_invariants() via simulation (issue #444).
+ * Returns the expected locked balance, the actual token balance and their delta.
+ */
+export async function readContractInvariants(
+  contractId: string
+): Promise<{ expected: bigint; actual: bigint; delta: bigint }> {
+  const client = await contract.Client.from({
+    contractId,
+    networkPassphrase,
+    rpcUrl: serverConfig.stellar.sorobanRpcUrl,
+  });
+
+  // @ts-expect-error — method generated from contract ABI at runtime
+  const tx = await client.check_invariants();
+  const [expected, actual, delta] = tx.result as [bigint, bigint, bigint];
+  return { expected: BigInt(expected), actual: BigInt(actual), delta: BigInt(delta) };
+}
+
+/**
+ * Invoke AjoContract.pause() via Soroban RPC (emergency halt, issue #444).
+ *
+ * @returns The Soroban transaction hash
+ */
+export async function invokeContractPause(contractId: string): Promise<string> {
   const keypair = Keypair.fromSecret(serverConfig.stellar.serverSecretKey);
   const signer = contract.basicNodeSigner(keypair, networkPassphrase);
 
@@ -222,11 +324,7 @@ export async function invokeContractSetPayoutOrder(
     ...signer,
   });
 
-  // set_payout_order(order: Vec<u32>)
   // @ts-expect-error — method generated from contract ABI at runtime
-  const assembled = await client.set_payout_order({ order: payoutOrder });
-  
-  // Wrap the inner transaction in a platform fee bump so users need no XLM
-  const innerXdr: string = assembled.toXDR();
-  return wrapWithFeeBump(innerXdr);
+  const assembled = await client.pause();
+  return wrapWithFeeBump(assembled.toXDR());
 }

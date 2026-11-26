@@ -33,6 +33,25 @@
 
 **Overall estimated reduction: 25-35% in ledger fees for typical circles**
 
+## `contribute` CPU Benchmark (issue #447, storage v3)
+
+Measured with `cargo test --lib bench_ -- --nocapture` (`src/benchmarks.rs`,
+soroban-sdk 21 `env.budget()`, 5-member circle, cycle-2 contribution).
+
+`contribute` now does one packed `MemberStats` read and one write. That
+record now holds the contribution flag (`last_cycle`), the suspension flag
+and the reputation. Previously it made a temporary-storage read plus a write
+for the contribution flag, and a second read and write of `MemberStats`
+inside `update_reputation`.
+
+| Entry point | Before (v2) CPU | After (v3) CPU | Change |
+|-------------|-----------------|----------------|--------|
+| `contribute` | 565,007 | 466,132 | **−17.5 %** |
+| `payout` | 510,393 | 580,635 | +13.8 % (multi-sig threshold read, #448) |
+| `join` | 389,001 | 439,728 | +13.0 % (packed `last_cycle` write) |
+
+`migrate()` upgrades v2 entries to v3 (`MemberStatsV2` → `MemberStats`).
+
 ## Storage Cost Analysis (issue #254)
 
 Measures the entries and ledger bytes each circle size creates and the

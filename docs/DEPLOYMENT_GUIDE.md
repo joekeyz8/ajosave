@@ -106,6 +106,23 @@ pool.query('SELECT NOW()', (err, res) => {
 
 ---
 
+## Container Health Check
+
+The `Dockerfile` defines a `HEALTHCHECK` that calls `GET /api/health` every
+30 s with a 10 s timeout (20 s start period). The container is marked
+`unhealthy` after 3 consecutive failures, so orchestrators (Docker Compose,
+ECS, Kubernetes) know when the app is ready to serve traffic.
+
+`docker-compose.yml` mirrors the same check on the `app` service, so any
+service declaring `depends_on: { app: { condition: service_healthy } }` waits
+until the app is healthy. The app itself waits for healthy `postgres` and
+`redis` before starting.
+
+```bash
+docker compose up -d
+docker inspect --format '{{.State.Health.Status}}' $(docker compose ps -q app)
+```
+
 ## Step 3: Deploy Code Changes
 
 ### Pull Latest Code
@@ -489,3 +506,44 @@ The endpoint is rate-limited to **5 requests per 10 minutes** per IP to prevent 
 2. Sends **100 USDC** from the server wallet to the account.
 
 > **Requirement:** The server wallet (`STELLAR_SERVER_SECRET_KEY`) must hold a USDC trustline and sufficient balance. Fund it once via [Stellar Laboratory](https://laboratory.stellar.org) on testnet.
+
+---
+
+## CI/CD Deployment Pipeline
+
+### Staging (`.github/workflows/staging-deploy.yml`)
+
+Pushes to `develop` (and `main`) deploy automatically to the `staging` GitHub Environment:
+
+1. Build with staging secrets — separate PostgreSQL database (`STAGING_DATABASE_URL`) and Stellar **testnet**.
+2. Upload source maps to Sentry, then delete every `*.map` file from `.next`.
+3. Run database migrations against the staging database.
+4. Deploy to Vercel and verify security headers.
+5. Comment the staging URL on every PR associated with the pushed commit.
+6. `e2e-staging` runs Playwright (`chromium` project) against the deployed URL via `PLAYWRIGHT_BASE_URL`.
+
+### Production — blue-green (`.github/workflows/production-deploy.yml`)
+
+Production is deployed manually (`workflow_dispatch`) and gated by the `production` environment's required reviewers. The current production deployment ("blue") keeps serving traffic until the new one ("green") is validated:
+
+| Step | What happens | Traffic |
+|------|--------------|---------|
+| Build | `next build` + Sentry source-map upload, maps deleted | blue |
+| Deploy green | `vercel --prebuilt` (preview, no `--prod`) | blue |
+| Validate green | `GET <green-url>/api/health` must succeed (10 retries) | blue |
+| Migrate | `npm run migrate` — runs **before** the switch, never during | blue |
+| Promote | `vercel promote <green-url>` atomically points the production domain at green | green |
+
+If validation or migrations fail, the job stops and blue keeps serving — no traffic was shifted. Migrations must therefore be backward compatible with the blue release (expand/contract).
+
+### Rollback (< 5 minutes)
+
+Run the **Rollback Production** workflow (see [`DEPLOYMENT_APPROVAL_ROLLBACK.md`](./DEPLOYMENT_APPROVAL_ROLLBACK.md)). Because the previous (blue) deployment is still live on Vercel, rollback is an alias re-point and completes in well under 5 minutes. For an immediate manual rollback: `vercel rollback --token $VERCEL_TOKEN`.
+
+### Sentry source maps
+
+Requires `SENTRY_AUTH_TOKEN` (GitHub secret) plus `SENTRY_ORG` / `SENTRY_PROJECT` (GitHub variables). `next.config.mjs` enables `productionBrowserSourceMaps`; CI injects debug IDs, uploads with `@sentry/cli` (release = commit SHA), and deletes the maps before deploy so they are never publicly served. After a deploy, trigger a test error and confirm the Sentry event shows original source lines.
+
+### Metrics
+
+`GET /api/metrics` exposes Prometheus metrics and requires `Authorization: Bearer $METRICS_BEARER_TOKEN`. Scrape config and alert rules (p99 > 2 s, 5xx rate > 1 %) live in `infra/prometheus/`; the Grafana dashboard is `infra/grafana/ajosave-api-dashboard.json`.

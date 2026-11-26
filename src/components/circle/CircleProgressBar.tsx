@@ -11,6 +11,9 @@
  *
  * Acceptance criteria covered:
  *  ✓ Progress bar renders percentage of completed cycles
+ *  ✓ Bar animates from 0 % to target over 600 ms on mount (issue #401)
+ *  ✓ Animation respects prefers-reduced-motion — skipped when set (issue #401)
+ *  ✓ Animation uses CSS width transition — no layout thrash (issue #401)
  *  ✓ Component is responsive (mobile and desktop)
  *  ✓ WCAG AA colour contrast (brand primary is #0f7a4a on white/elevated bg)
  *
@@ -22,6 +25,7 @@
  *   />
  */
 
+import { useEffect, useState } from "react";
 import styles from "./CircleProgressBar.module.css";
 
 export interface CircleProgressBarProps {
@@ -53,6 +57,22 @@ export function CircleProgressBar({
       : totalCycles > 0
       ? Math.round((completedCycles / totalCycles) * 100)
       : 0;
+
+  // ── Mount animation (issue #401) ──────────────────────────────────────────
+  // Start at 0 % and transition to the real value after the first paint so the
+  // browser has a chance to register the starting width before animating.
+  // The CSS transition on .fill drives the actual animation; we just supply the
+  // correct target width after mount.
+  const [displayPercent, setDisplayPercent] = useState(0);
+
+  useEffect(() => {
+    // rAF ensures the initial 0 % paint has been committed before we update.
+    const id = requestAnimationFrame(() => {
+      setDisplayPercent(percent);
+    });
+    return () => cancelAnimationFrame(id);
+    // Re-run only when the target percent changes (e.g. real-time update).
+  }, [percent]);
 
   // Only show step dots when the total is small enough to be readable
   const showDots = totalCycles <= 12;
@@ -91,7 +111,7 @@ export function CircleProgressBar({
       >
         <div
           className={styles.fill}
-          style={{ width: `${percent}%` }}
+          style={{ width: `${displayPercent}%` }}
           data-testid="cpb-fill"
         />
         {/* Segment dividers */}

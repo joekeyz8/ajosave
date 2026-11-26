@@ -18,6 +18,10 @@ on:
         required: false
         default: ""
 
+concurrency:
+  group: production-rollback
+  cancel-in-progress: false
+
 permissions:  # least-privilege CI tokens (#108)
   contents: read
   deployments: write   # create/update GitHub Deployments for rollback tracking

@@ -1,58 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
 import {
   startHorizonStream,
   stopHorizonStream,
   getStreamStatus,
 } from "@/server/services/horizon-stream.service";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withAdminAuth } from "@/server/middleware";
 import type { ApiResponse } from "@/types";
 
 /**
  * GET /api/admin/horizon-stream
- * Get Horizon stream status
+ * Get Horizon stream status (admin only).
  */
-export const GET = withErrorHandler(async (_req: NextRequest) => {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Unauthorized" },
-      { status: 401 }
-    );
-  }
-
-  // TODO: Add admin role check
-  // if (session.user.role !== 'admin') {
-  //   return NextResponse.json<ApiResponse<never>>(
-  //     { success: false, error: "Forbidden" },
-  //     { status: 403 }
-  //   );
-  // }
-
+export const GET = withAdminAuth(withErrorHandler(async () => {
   const status = getStreamStatus();
-
   return NextResponse.json<ApiResponse<{ running: boolean }>>({
     success: true,
     data: status,
   });
-});
+}));
 
 /**
  * POST /api/admin/horizon-stream
- * Start or stop the Horizon stream
+ * Start or stop the Horizon stream (admin only).
  */
-export const POST = withErrorHandler(async (req: NextRequest) => {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Unauthorized" },
-      { status: 401 }
-    );
-  }
-
-  // TODO: Add admin role check
-
+export const POST = withAdminAuth(withErrorHandler(async (req: NextRequest) => {
   const body = await req.json();
   const { action } = body as { action: "start" | "stop" };
 
@@ -74,4 +45,4 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       { status: 400 }
     );
   }
-});
+}));

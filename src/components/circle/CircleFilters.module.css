@@ -56,3 +56,44 @@
 .searchInput {
   width: 100%;
 }
+
+/*
+ * Keyboard focus indicators. The base styles had none, so Tab-focused controls
+ * gave no visible indication — a WCAG 2.1 AA focus-visible gap. Scoped to
+ * :focus-visible so mouse clicks don't show the ring.
+ */
+.input:focus-visible,
+.select:focus-visible {
+  border-color: var(--color-brand-primary);
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 1px;
+}
+
+.clearGroup {
+  display: flex;
+  align-items: flex-end;
+}
+
+.clearBtn {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  padding: var(--space-2) var(--space-4);
+  white-space: nowrap;
+  transition:
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.clearBtn:hover {
+  color: var(--color-text-primary);
+  border-color: var(--color-text-secondary);
+}
+
+.clearBtn:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+}

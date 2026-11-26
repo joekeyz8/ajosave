@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type { Circle, Member } from "@/types";
 import { CircleStatusBadge } from "@/components/ui/CircleStatusBadge";
-import { format } from "date-fns";
+import { formatDate } from "@/lib/date-formatting";
+import { useLocale } from "next-intl";
 import styles from "./CircleCard.module.css";
 
 interface CircleCardProps {
@@ -11,6 +12,7 @@ interface CircleCardProps {
 }
 
 export function CircleCard({ circle, members, showJoin = false }: CircleCardProps) {
+  const locale = useLocale();
   const spotsLeft = circle.maxMembers - members.length;
 
   return (
@@ -30,7 +32,7 @@ export function CircleCard({ circle, members, showJoin = false }: CircleCardProp
           {members.length} / {circle.maxMembers} members
         </span>
         {circle.nextPayoutAt && (
-          <span>Next payout: {format(new Date(circle.nextPayoutAt), "MMM d, yyyy")}</span>
+          <span>Next payout: {formatDate(new Date(circle.nextPayoutAt), locale)}</span>
         )}
       </div>
 

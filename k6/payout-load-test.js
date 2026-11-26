@@ -11,9 +11,9 @@ export const options = {
   vus: 50,
   duration: "30s",
   thresholds: {
-    // p95 latency baseline: document actual value from first run
-    http_req_duration: ["p(95)<5000"],
-    payout_error_rate: ["rate<0.1"],
+    // CI performance gate (see k6/BENCHMARKS.md): p95 < 500 ms, errors < 0.1 %
+    http_req_duration: ["p(95)<500"],
+    payout_error_rate: ["rate<0.001"],
   },
 };
 

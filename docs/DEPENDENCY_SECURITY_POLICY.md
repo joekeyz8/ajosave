@@ -1,5 +1,3 @@
-# Dependency Security Policy
-
 > **Issue #107** — This document defines how Ajosave manages the security of its
 > third-party dependencies (npm, Cargo, and GitHub Actions) across the full
 > development-and-release lifecycle.
@@ -7,7 +5,6 @@
 ---
 
 ## 1. Scope
-
 | Ecosystem | Location | Manager |
 |-----------|----------|---------|
 | npm (Node.js) | `/` | `npm` |
@@ -17,7 +14,6 @@
 ---
 
 ## 2. Automated Dependency Updates (Dependabot)
-
 Dependabot is configured in [`.github/dependabot.yml`](.github/dependabot.yml)
 and runs **weekly on Mondays at 06:00 UTC** for all three ecosystems.
 
@@ -32,7 +28,6 @@ and runs **weekly on Mondays at 06:00 UTC** for all three ecosystems.
 ## 3. Severity Thresholds and Blocking Rules
 
 ### npm
-
 `npm audit --audit-level=high` runs in the **CI** and **Security Audit**
 workflows on every PR and push to `main`.
 
@@ -45,7 +40,8 @@ workflows on every PR and push to `main`.
 
 ### Cargo
 
-`cargo audit` runs in the **Security Audit** workflow for Rust contracts.
+#### Vulnerability Scanning (`cargo audit`)
+`cargo audit` runs in the **Security Audit** and **Dependency Policy** workflows for Rust contracts.
 
 | CVSS | Action |
 |------|--------|
@@ -54,8 +50,24 @@ workflows on every PR and push to `main`.
 | 4.0 – 6.9 (Medium) | ⚠️ Triage within 7 days |
 | < 4.0 (Low) | ℹ️ Informational |
 
-### Container image (Trivy)
+#### License and Duplicate Checks (`cargo deny`)
+`cargo deny check` runs in the **Dependency Policy** workflow on every PR and push to `main`.
 
+| Check | Action |
+|-------|--------|
+| Denied licenses (GPL, AGPL, etc.) | ❌ Blocks merge |
+| Unlicensed crates | ❌ Blocks merge |
+| Duplicate dependency versions | ❌ Blocks merge |
+| Copyleft licenses | ⚠️ Warning — review required |
+| Unknown git/registry sources | ⚠️ Warning |
+
+The `cargo deny` configuration is defined in [`contracts/deny.toml`](../contracts/deny.toml) and enforces:
+- **Allowed licenses**: MIT, Apache-2.0, BSD-2/3-Clause, ISC, CC0-1.0, and Unicode licenses
+- **Denied licenses**: GPL-2.0, GPL-3.0, AGPL-3.0
+- **Duplicate versions**: Blocked by default (exceptions can be added to `allow` list)
+- **Source restrictions**: Only crates.io registry is allowed; git sources require explicit approval
+
+### Container image (Trivy)
 `trivy` scans the Docker image in the **Security Audit** workflow.
 `CRITICAL` and `HIGH` CVEs are uploaded to the GitHub Security tab via SARIF.
 
@@ -64,18 +76,16 @@ workflows on every PR and push to `main`.
 ## 4. Pinning and Version Locking
 
 ### npm
-
 - All production and dev dependencies use **exact or caret (`^`) versions**
   in `package.json`.
 - `package-lock.json` is committed and validated with `npm ci` (not `npm install`)
   in every CI job.
 
 ### Cargo
-
 - `Cargo.lock` is committed and locked for the Soroban contract workspace.
+- Dependency sources are restricted to crates.io via `cargo deny` configuration.
 
 ### GitHub Actions
-
 - Third-party (non-GitHub-official) Actions **must be pinned to a full SHA**,
   for example:
   ```yaml
@@ -86,19 +96,20 @@ workflows on every PR and push to `main`.
 ---
 
 ## 5. Adding or Upgrading a Dependency
-
 1. Open a PR. The CI pipeline runs `npm audit` (or `cargo audit`) automatically.
 2. If any **high** or **critical** advisory is introduced, the PR **cannot be merged**.
 3. Reviewer must verify:
    - The package is well-maintained (last release < 12 months, active issue tracker).
    - No known typosquatting or supply-chain risk.
    - No unnecessary broad permissions (e.g. `postinstall` scripts that phone home).
-4. Major version bumps require a dedicated PR with a summary of breaking-change impact.
+4. For Cargo dependencies, also verify:
+   - License is in the allow list (see `contracts/deny.toml`).
+   - No duplicate versions are introduced.
+5. Major version bumps require a dedicated PR with a summary of breaking-change impact.
 
 ---
 
 ## 6. Vulnerability Response SLA
-
 | Severity | Acknowledge | Patch or mitigation deployed |
 |----------|-------------|------------------------------|
 | Critical | 4 hours | 24 hours |
@@ -112,7 +123,6 @@ The on-call engineer is responsible for acknowledging and triaging; see
 ---
 
 ## 7. Exception Process
-
 If a vulnerable dependency **cannot** be updated within the SLA (e.g. no upstream
 fix exists):
 
@@ -122,14 +132,19 @@ fix exists):
 3. Get sign-off from at least one maintainer with `security` write access.
 4. Exceptions expire after **30 days** and must be re-reviewed.
 
+For license exceptions (e.g. need to use a GPL crate):
+1. Document the legal review and business justification in the PR.
+2. Add the crate to the `allow` list in `contracts/deny.toml` with a comment.
+3. Get sign-off from at least one maintainer with `security` write access.
+
 ---
 
 ## 8. CI Enforcement Summary
-
 | Check | Workflow | Blocks merge? |
 |-------|----------|---------------|
 | `npm audit --audit-level=high` | `security.yml`, `dependency-policy.yml` | ✅ Yes (high/critical) |
-| `cargo audit` | `security.yml` | ✅ Yes (high/critical) |
+| `cargo audit` | `security.yml`, `dependency-policy.yml` | ✅ Yes (high/critical) |
+| `cargo deny check` | `dependency-policy.yml` | ✅ Yes (licenses, duplicates) |
 | Trivy container scan | `security.yml` | SARIF uploaded; advisory |
 | Gitleaks / TruffleHog | `secrets-scan.yml` | ✅ Yes |
 | Dependabot open PRs | Dependabot | Advisory |
@@ -137,8 +152,8 @@ fix exists):
 ---
 
 ## 9. Related Documents
-
 - [`docs/secrets-security.md`](docs/secrets-security.md) — secret rotation and storage
 - [`docs/SECRET_ROTATION.md`](docs/SECRET_ROTATION.md) — rotation runbook
 - [`SECURITY.md`](SECURITY.md) — vulnerability disclosure policy
 - [`.github/dependabot.yml`](.github/dependabot.yml) — Dependabot configuration
+- [`contracts/deny.toml`](../contracts/deny.toml) — Cargo deny configuration

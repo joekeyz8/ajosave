@@ -4,11 +4,13 @@ import { authOptions } from "@/lib/auth";
 import { getCircleById, getMembersByCircle } from "@/server/services/circle.service";
 import { initializePayment } from "@/lib/paystack";
 import { serverConfig } from "@/server/config";
-import { withErrorHandler, withIdempotency, withRateLimit } from "@/server/middleware";
+import { withErrorHandler } from "@/server/middleware";
 import { query } from "@/lib/db";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 import type { ApiResponse } from "@/types";
+import { enforceKycContributionLimit, KycLimitError } from "@/lib/kyc-limits";
+import { ngnToUsdc } from "@/server/services/circle.service";
 
 const bodySchema = z.object({
   partialAmountFiat: z.number().positive().optional(),
@@ -92,6 +94,23 @@ export const POST = withErrorHandler(async (req: NextRequest, ctx: unknown) => {
     : fullFiat;
   const isPartial = payFiat < fullFiat;
   const payUsdc = ((payFiat / fullFiat) * fullUsdc).toFixed(7);
+
+  // Issue #422: Enforce KYC tier limits before accepting contribution
+  const contributionNgn = circle.contributionNgn;
+  try {
+    await enforceKycContributionLimit(userId, contributionNgn);
+  } catch (err) {
+    if (err instanceof KycLimitError) {
+      return NextResponse.json<ApiResponse<never>>(
+        { 
+          success: false, 
+          error: `KYC limit exceeded: ${err.message}` 
+        },
+        { status: 403 }
+      );
+    }
+    throw err;
+  }
 
   const reference = `ajo-${params.id}-${member.id}-${circle.currentCycle}-${Date.now()}`;
   const callbackUrl = `${serverConfig.app.url}/circles/${params.id}/contribute/callback?reference=${reference}`;

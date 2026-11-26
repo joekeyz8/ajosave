@@ -9,6 +9,7 @@ import type { Circle } from "@/types";
 import styles from "./JoinCircleForm.module.css";
 import { useFreighterWallet } from "@/hooks/useFreighterWallet";
 import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
+import { useCircleInvalidation } from "@/lib/queryInvalidation";
 
 interface Props {
   circle: Circle;
@@ -18,6 +19,7 @@ interface Props {
 
 export function JoinCircleForm({ circle, token, inviteValid }: Props) {
   const router = useRouter();
+  const { invalidateCircles, invalidateCircle } = useCircleInvalidation();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [optimisticJoined, setOptimisticJoined] = useState(false);
@@ -91,6 +93,8 @@ export function JoinCircleForm({ circle, token, inviteValid }: Props) {
       if (!json.success) throw new Error(json.error);
       try { (await import('@vercel/analytics')).track('circle_joined', { circleId: circle.id }); } catch {}
 
+      invalidateCircles();
+      invalidateCircle(circle.id);
       router.push(`/circles/${circle.id}?joined=true`);
       router.refresh();
     } catch (err) {

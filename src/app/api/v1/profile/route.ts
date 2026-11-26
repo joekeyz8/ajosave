@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { query } from "@/lib/db";
-import { decrypt, encrypt } from "@/lib/encryption";
+import { decrypt, encrypt, PiiDecryptionError } from "@/lib/encryption";
 import { z } from "zod";
 import type { ApiResponse } from "@/types";
 
@@ -72,13 +72,25 @@ export async function GET(): Promise<NextResponse<ApiResponse<ProfileData>>> {
   }
 
   const row = rows[0];
+  let decryptedPhone: string;
+  let decryptedEmail: string | null;
+  try {
+    decryptedPhone = decrypt(row.phone);
+    decryptedEmail = row.email ? decrypt(row.email) : null;
+  } catch (err) {
+    if (err instanceof PiiDecryptionError) {
+      console.error("[profile] ALERT: PII decryption failure for user", session.user.id);
+      return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 });
+    }
+    throw err;
+  }
   return NextResponse.json({
     success: true,
     data: {
       id: row.id,
-      phone: decrypt(row.phone),
+      phone: decryptedPhone,
       displayName: row.display_name,
-      email: row.email ? decrypt(row.email) : null,
+      email: decryptedEmail,
       stellarPublicKey: row.stellar_public_key,
       reputationScore: row.reputation_score,
       contributionStats: {

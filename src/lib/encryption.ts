@@ -18,6 +18,22 @@ const IV_BYTES = 12; // 96-bit IV recommended for GCM
 const TAG_BYTES = 16;
 const ENCODING = "base64url" as const;
 
+/**
+ * Thrown when AES-256-GCM tag verification fails (key mismatch or tampered ciphertext).
+ * Callers should NOT swallow this — surface a 500 response and alert operations.
+ */
+export class PiiDecryptionError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "PiiDecryptionError";
+  }
+}
+
+const ALGORITHM = "aes-256-gcm";
+const IV_BYTES = 12; // 96-bit IV recommended for GCM
+const TAG_BYTES = 16;
+const ENCODING = "base64url" as const;
+
 function getEncryptionKey(): Buffer {
   const hex = process.env.PII_ENCRYPTION_KEY;
   if (!hex || hex.length !== 64) {
@@ -50,6 +66,7 @@ export function encrypt(plaintext: string): string {
 /**
  * Decrypt a value produced by `encrypt()`.
  * Throws if the authentication tag is invalid (tamper detection).
+ * Never returns null silently — callers must handle the thrown error and surface a 500.
  */
 export function decrypt(encrypted: string): string {
   const key = getEncryptionKey();
@@ -61,7 +78,18 @@ export function decrypt(encrypted: string): string {
   const tag = Buffer.from(tagB64, ENCODING);
   const decipher = createDecipheriv(ALGORITHM, key, iv);
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  try {
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  } catch (cause) {
+    // Surface to Sentry / alerting pipelines via a named error class
+    const err = new PiiDecryptionError(
+      `AES-256-GCM authentication tag verification failed — possible key mismatch or data tampering`,
+      { cause }
+    );
+    // Best-effort: emit to stderr so log aggregation picks it up without leaking ciphertext
+    console.error("[encryption] ALERT: decryption failure", { error: err.message });
+    throw err;
+  }
 }
 
 /**

@@ -131,6 +131,8 @@ Start with `lib.rs`. Each public function is marked `#[contractimpl]`.
 
 ## Storage Layout & Lifetime
 
+See [`contracts/ajo/STORAGE_LAYOUT.md`](../contracts/ajo/STORAGE_LAYOUT.md) for the full key schema, storage versions and the migration authoring guide.
+
 | Type | Keys | Lifetime |
 |---|---|---|
 | Instance | Admin, Token, ContributionAmount, MaxMembers, CycleIntervalSecs, Members, PayoutOrder, CurrentCycle, NextPayoutTime, Completed, Paused, PayoutLock, MultisigConfig | Contract lifetime |

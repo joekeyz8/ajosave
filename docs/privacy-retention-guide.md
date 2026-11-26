@@ -165,6 +165,76 @@ applies:
 
 ---
 
+## Application Log Retention
+
+### Log providers
+
+Ajosave sends application logs and telemetry to the following providers:
+
+| Provider | Purpose | Current retention |
+|----------|---------|-------------------|
+| Sentry | Error tracking and performance monitoring | 90 days (default) |
+| Vercel Logs | Application logs from serverless functions | 90 days (default) |
+
+### Retention policy
+
+Per GDPR and financial regulations, application logs must be retained for specific periods:
+
+| Storage tier | Retention period | Purpose |
+|--------------|------------------|---------|
+| Hot storage | 90 days | Active debugging, incident response |
+| Cold storage | 2 years | Regulatory audit, compliance |
+
+### PII exclusion
+
+All logs sent to external providers are redacted before transmission using
+`src/lib/telemetry-redaction.ts`. The following PII fields are automatically
+excluded:
+
+- **Identity**: phone numbers, email addresses, full names, NIN/BVN
+- **Financial**: account numbers, card PANs, CVVs, IBAN, transaction amounts in PII context
+- **Operational**: secret keys, tokens, passwords, OTP codes, wallet private keys
+
+The `redactSentryEvent` function is integrated into Sentry configuration
+(`sentry.server.config.ts`, `sentry.client.config.ts`, `sentry.edge.config.ts`)
+to ensure no PII leaves the application.
+
+### Automated log archival
+
+A monthly GitHub workflow (`.github/workflows/log-retention.yml`) archives logs
+from hot storage to cold storage before the 90-day retention window expires:
+
+1. **Export logs** from Sentry and Vercel for the previous month
+2. **Compress and encrypt** using AES-256-GCM
+3. **Upload to cold storage** (S3-compatible object storage)
+4. **Delete from hot storage** after successful archival
+5. **Purge from cold storage** after 2 years
+
+The workflow runs on the 1st of each month at 00:00 UTC and requires:
+- `SENTRY_AUTH_TOKEN`: Sentry API token with read access
+- `VERCEL_TOKEN`: Vercel API token with log access
+- `COLD_STORAGE_ACCESS_KEY`: Object storage access key
+- `COLD_STORAGE_SECRET_KEY`: Object storage secret key
+- `COLD_STORAGE_BUCKET`: Object storage bucket name
+- `COLD_STORAGE_REGION`: Object storage region
+
+### Manual log deletion
+
+For urgent log deletion requests (e.g., data breach response):
+
+1. Use the **Log Retention** workflow with `manual_trigger: true`
+2. Specify the date range to delete
+3. Logs are deleted from both hot and cold storage
+4. Deletion is logged in `audit_logs` with action `logs_deleted`
+
+### Compliance verification
+
+- Monthly retention job execution is logged in GitHub Actions history
+- Cold storage inventory is audited quarterly
+- Any retention policy changes require security team approval
+
+---
+
 ## CI Checks
 
 The automated deletion logic is covered by unit tests in
@@ -178,8 +248,10 @@ must include a corresponding test update.
 
 - `src/lib/retention.ts` — retention job implementation
 - `src/lib/encryption.ts` — PII encryption helpers
+- `src/lib/telemetry-redaction.ts` — PII redaction for logs and telemetry
 - `scripts/backfill-pii-encryption.ts` — backfill script
 - `migrations/1749000000000_pii-encryption-phone-email.ts` — PII encryption migration
+- `.github/workflows/log-retention.yml` — automated log archival and deletion
 - `docs/environment-variables.md` — encryption key configuration
 - `docs/secrets-security.md` — secret inventory and rotation
 - `SECURITY.md` — vulnerability disclosure policy

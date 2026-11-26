@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { PayoutHistoryRow } from "@/server/services/payout.service";
-import { format } from "date-fns";
+import { formatDate } from "@/lib/date-formatting";
+import { useLocale } from "next-intl";
 import styles from "./PayoutHistory.module.css";
 
 const explorerNetwork =
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export function PayoutHistory({ circleId, initialPayouts }: Props) {
+  const locale = useLocale();
   const [payouts, setPayouts] = useState<PayoutHistoryRow[] | null>(initialPayouts ?? null);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,7 +71,7 @@ export function PayoutHistory({ circleId, initialPayouts }: Props) {
               <td>{p.cycleNumber}</td>
               <td>{p.recipientName}</td>
               <td>{parseFloat(p.amountUsdc).toFixed(2)}</td>
-              <td>{format(new Date(p.paidAt), "MMM d, yyyy")}</td>
+              <td>{formatDate(new Date(p.paidAt), locale)}</td>
               <td>
                 <a
                   href={`${STELLAR_EXPLORER}/${p.txHash}`}

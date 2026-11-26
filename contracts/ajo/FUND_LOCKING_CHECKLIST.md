@@ -11,6 +11,19 @@ Each item below is either covered by an existing/added automated test
 
 ## Checklist
 
+- [x] **Contract state cannot be archived while a circle is idle (issue #445).**
+  Every public entry point — including `migrate` and all view functions —
+  calls `extend_instance_ttl`, which runs
+  `env.storage().instance().extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT)`
+  (or the admin-configured `set_ttl_config` values). When adding a new
+  entry point, make its first statement `Self::extend_instance_ttl(&env);`.
+  Covered by `every_entry_point_bumps_instance_ttl` (`hardening_tests.rs`).
+- [x] **Large payouts need M-of-N approval (issue #448).** When
+  `configure_payout_multisig` is set, `payout()` panics unless the pot is at
+  or below the threshold or the current cycle has enough unexpired (48h)
+  `approve_payout` signatures. Covered by `large_payout_requires_m_of_n`,
+  `large_payout_executes_with_m_of_n` and `approvals_expire_after_48_hours`.
+
 - [x] **Reentrancy guard covers the whole payout window.** `PayoutLock` is set
   before any external call and cleared only after the token transfer
   succeeds; a re-entrant `payout()` call while locked panics.

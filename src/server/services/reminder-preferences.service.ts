@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import { query } from "@/lib/db";
 
 export const ALLOWED_LEAD_HOURS = [2, 24] as const;

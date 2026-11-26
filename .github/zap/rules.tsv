@@ -10,9 +10,11 @@
 # Rule IDs are from the ZAP passive and active scanner rule sets.
 # See https://www.zaproxy.org/docs/alerts/ for the full list.
 #
-# ─── Security headers — now ENFORCED (fixed in next.config.mjs, issue #195) ──
+# ─── Security headers — now ENFORCED (fixed in next.config.mjs, issues #195 #358-#361) ──
 # 10038 — Content-Security-Policy header not set
-#   CSP is now set in next.config.mjs for all routes. Fail the scan if missing.
+#   CSP is now set in next.config.mjs for all page/layout routes AND directly
+#   on the HTML-serving /api/v1/docs route (API routes bypass next.config.mjs).
+#   Fail the scan if the header is missing anywhere.
 10038	FAIL		
 # 10035 — Strict-Transport-Security header not set
 #   HSTS is now set: max-age=31536000; includeSubDomains; preload

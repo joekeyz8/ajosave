@@ -1,32 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cleanupExpiredTokens } from "@/lib/refresh-tokens";
-import { serverConfig } from "@/server/config";
+import { verifyCronSecret } from "@/lib/cron-auth";
 import type { ApiResponse } from "@/types";
 
 /**
  * GET /api/cron/cleanup-tokens
  * Cleans up expired refresh tokens from the database.
- * Should be called periodically (e.g., daily) via a cron service.
- * 
- * Requires CRON_SECRET header for authentication.
+ * Should be called periodically (e.g. daily) via a scheduled cron job.
+ *
+ * Authentication: HMAC-SHA256 signed request via verifyCronSecret.
+ * See src/lib/cron-auth.ts for signing instructions.
  */
 export async function GET(req: NextRequest) {
-  // Verify cron secret
-  const cronSecret = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!cronSecret || cronSecret !== serverConfig.cronSecret) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Unauthorized" },
-      { status: 401 }
-    );
-  }
+  const unauth = await verifyCronSecret(req);
+  if (unauth) return unauth;
 
   try {
     const deletedCount = await cleanupExpiredTokens();
     return NextResponse.json<ApiResponse<{ deletedCount: number }>>(
-      {
-        success: true,
-        data: { deletedCount },
-      },
+      { success: true, data: { deletedCount } },
       { status: 200 }
     );
   } catch (error) {

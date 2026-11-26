@@ -24,6 +24,7 @@ the [principle of least privilege](https://docs.github.com/en/actions/security-g
 | Workflow | contents | security-events | pull-requests | deployments | issues | id-token |
 |----------|----------|-----------------|---------------|-------------|--------|----------|
 | `ci.yml` | read | — | — | — | — | — |
+| `contract-deploy-dry-run.yml` | read | — | — | — | — | — |
 | `security.yml` | read | write | write | — | — | — |
 | `secrets-scan.yml` | read | write | write | — | — | — |
 | `dependency-policy.yml` | read | — | write | — | — | — |
@@ -94,3 +95,10 @@ Individual workflows then opt-in to the additional scopes they need via
 - [`docs/DEPENDENCY_SECURITY_POLICY.md`](DEPENDENCY_SECURITY_POLICY.md)
 - [`docs/secrets-security.md`](secrets-security.md)
 - [GitHub docs — Workflow permissions](https://docs.github.com/en/actions/security-guides/automatic-token-authentication#permissions-for-the-github_token)
+
+## Testnet Deploy Dry-Run Credentials
+
+`contract-deploy-dry-run.yml` uses `CI_TESTNET_DEPLOYER_SECRET_KEY`, stored as a
+secret on the `ci-testnet` GitHub Environment. It must be a dedicated
+testnet-only account funded via Friendbot, never reused for mainnet or for the
+production server key.

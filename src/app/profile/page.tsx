@@ -189,6 +189,9 @@ export default function ProfilePage() {
               <span className={styles.statLabel}>On-time rate</span>
             </div>
           </div>
+          <Link href="/statements" className="btn btn--secondary btn--sm" style={{ marginTop: "var(--space-4)" }}>
+            📄 View Activity Statement
+          </Link>
         </section>
 
         {/* ── Referral ── */}

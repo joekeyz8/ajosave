@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getPublicKey } from "@stellar/freighter-api";
 
 /** The type of mismatch detected between the expected and connected wallet. */
 export type MismatchType = "address" | "network" | "none";
@@ -57,16 +58,26 @@ export function useWalletMismatch(
   currentWalletAddress: string | null
 ): UseWalletMismatchReturn {
   const [mismatchType, setMismatchType] = useState<MismatchType>("none");
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const visibilityHandlerRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!currentWalletAddress) {
       // Wallet is not connected — no mismatch to surface.
       setMismatchType("none");
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       return;
     }
 
     if (currentWalletAddress === expectedAddress) {
       setMismatchType("none");
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       return;
     }
 
@@ -80,6 +91,10 @@ export function useWalletMismatch(
 
     if (!looksLikeStellarPubnet) {
       setMismatchType("network");
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       return;
     }
 
@@ -87,11 +102,68 @@ export function useWalletMismatch(
     // Check if the user has already dismissed this specific mismatch.
     if (isDismissed(expectedAddress, currentWalletAddress)) {
       setMismatchType("none");
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
       return;
     }
 
     setMismatchType("address");
   }, [expectedAddress, currentWalletAddress]);
+
+  // Set up polling to detect wallet changes
+  useEffect(() => {
+    if (typeof window === "undefined" || !currentWalletAddress) {
+      return;
+    }
+
+    // Handle visibility change to pause/resume polling
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        // Tab is hidden — stop polling
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      } else {
+        // Tab is visible — resume polling
+        if (!pollingIntervalRef.current) {
+          startPolling();
+        }
+      }
+    };
+
+    const startPolling = () => {
+      pollingIntervalRef.current = setInterval(async () => {
+        try {
+          const liveAddress = await getPublicKey();
+          if (liveAddress && liveAddress !== currentWalletAddress) {
+            // Wallet has changed — trigger re-evaluation
+            // We'll rely on the parent component to pass the updated currentWalletAddress
+            setMismatchType("none"); // Clear current state to allow re-check
+          }
+        } catch (err) {
+          // Silently ignore polling errors (Freighter not available, etc.)
+          console.debug("Wallet polling error:", err);
+        }
+      }, 2000); // Poll every 2 seconds to detect changes within 2s
+    };
+
+    visibilityHandlerRef.current = handleVisibilityChange;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    startPolling();
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+      if (visibilityHandlerRef.current) {
+        document.removeEventListener("visibilitychange", visibilityHandlerRef.current);
+      }
+    };
+  }, [currentWalletAddress]);
 
   const handleDismiss = useCallback(() => {
     if (currentWalletAddress && currentWalletAddress !== expectedAddress) {

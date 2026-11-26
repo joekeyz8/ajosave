@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 import { query, transaction } from "@/lib/db";
 import type { CircleMessage, MessageReaction, ReactionCount, ReactionEmoji } from "@/types";
 import { ALLOWED_REACTIONS } from "@/types";

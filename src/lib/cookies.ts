@@ -16,7 +16,7 @@ export const LOCALE_COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60; // 1 year
 export interface SecureCookieOptions {
   httpOnly: true;
   secure: boolean;
-  sameSite: "lax";
+  sameSite: "strict";
   maxAge: number;
   path: "/";
 }
@@ -36,7 +36,7 @@ export function refreshTokenCookieOptions(
   return {
     httpOnly: true,
     secure: isSecureContext(),
-    sameSite: "lax",
+    sameSite: "strict",
     maxAge,
     path: "/",
   };

@@ -26,7 +26,14 @@ export async function POST(req: NextRequest) {
   const rawBody = await req.text();
 
   if (!verifySignature(rawBody, signature)) {
-    logger.warn({ signature }, "Invalid Paystack webhook signature");
+    logger.warn(
+      {
+        securityAudit: true,
+        event: "PAYSTACK_WEBHOOK_INVALID_SIGNATURE",
+        ip: req.headers.get("x-forwarded-for") ?? undefined,
+      },
+      "Invalid Paystack webhook signature"
+    );
     return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
   }
 

@@ -50,15 +50,19 @@ export const GET = withErrorHandler(async (_req: NextRequest) => {
     [userId]
   );
 
-  const records = rows.map((r) => ({
-    date: new Date(r.date).toISOString().split("T")[0],
-    circleName: r.circleName,
-    amountUsdc: parseFloat(r.amountUsdc).toFixed(2),
-    status: r.status,
-  }));
+  async function* rowsGen() {
+    for (const r of rows) {
+      yield {
+        date: new Date(r.date).toISOString().split("T")[0],
+        circleName: r.circleName,
+        amountUsdc: parseFloat(r.amountUsdc).toFixed(2),
+        status: r.status,
+      };
+    }
+  }
 
   const filename = `contributions-${new Date().toISOString().split("T")[0]}`;
-  return new NextResponse(createCsvStream(records, { columns: [...COLUMNS] }), {
+  return new NextResponse(createCsvStream(rowsGen(), { columns: [...COLUMNS] }), {
     status: 200,
     headers: exportResponseHeaders(filename),
   });

@@ -13,6 +13,14 @@
     {
       "path": "/api/cron/cycle",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/reconcile-invariants",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/reputation-decay",
+      "schedule": "0 3 * * *"
     }
   ],
   "functions": {

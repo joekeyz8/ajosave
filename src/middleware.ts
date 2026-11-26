@@ -1,8 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkCsrf, resolveAllowedOrigins } from "@/lib/csrf";
+import { generateNonce, buildCsp, NONCE_HEADER } from "@/lib/csp";
+
+/**
+ * Attach the Content-Security-Policy header and the forwarding nonce header
+ * to any response.  The nonce is sent to the Next.js layout via `x-nonce` so
+ * that server components can embed it in `<script nonce="…">` tags.
+ */
+function attachCsp(response: NextResponse, nonce: string): NextResponse {
+  const csp = buildCsp({ nonce, reportUri: "/api/csp-report" });
+  response.headers.set("Content-Security-Policy", csp);
+  // The layout reads this header to inject the nonce into the HTML.
+  response.headers.set(NONCE_HEADER, nonce);
+  return response;
+}
 
 export function middleware(request: NextRequest) {
   const origin = request.headers.get("origin");
+  // A fresh nonce is generated for every request so an attacker cannot replay it.
+  const nonce = generateNonce();
 
   const allowedOrigins = resolveAllowedOrigins();
 
@@ -27,19 +43,25 @@ export function middleware(request: NextRequest) {
   }
 
   // Handle API versioning redirects
-  if (request.nextUrl.pathname.startsWith("/api/") && !request.nextUrl.pathname.startsWith("/api/v1/")) {
+  if (
+    request.nextUrl.pathname.startsWith("/api/") &&
+    !request.nextUrl.pathname.startsWith("/api/v1/")
+  ) {
     // Skip auth routes as they need special handling
     if (!request.nextUrl.pathname.startsWith("/api/auth/")) {
       const newUrl = request.nextUrl.clone();
-      newUrl.pathname = newUrl.pathname.replace('/api/', '/api/v1/');
-      
+      newUrl.pathname = newUrl.pathname.replace("/api/", "/api/v1/");
+
       const response = NextResponse.redirect(newUrl, {
-        status: request.method === 'GET' ? 301 : 308,
+        status: request.method === "GET" ? 301 : 308,
       });
-      
-      response.headers.set('X-API-Deprecated', 'true');
-      response.headers.set('X-API-Deprecation-Info', `This endpoint is deprecated. Use ${newUrl.pathname} instead.`);
-      
+
+      response.headers.set("X-API-Deprecated", "true");
+      response.headers.set(
+        "X-API-Deprecation-Info",
+        `This endpoint is deprecated. Use ${newUrl.pathname} instead.`
+      );
+
       return response;
     }
   }
@@ -85,13 +107,18 @@ export function middleware(request: NextRequest) {
         "Content-Type, Authorization, X-Requested-With, X-CSRF-Token"
       );
       response.headers.set("Access-Control-Allow-Credentials", "true");
-      return response;
+      return attachCsp(response, nonce);
     }
   }
 
-  return NextResponse.next();
+  // All other requests (page routes, non-CORS API requests): attach CSP.
+  return attachCsp(NextResponse.next(), nonce);
 }
 
 export const config = {
-  matcher: "/api/:path*",
+  // Run on all routes except Next.js internals and static assets.
+  // The CSP must be present on every HTML page response.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico).*)",
+  ],
 };

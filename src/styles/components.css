@@ -19,6 +19,15 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* WCAG 2.4.7 — explicit focus ring for keyboard navigation.
+   :focus-visible ensures mouse clicks do not show the ring.
+   Consistent design-system spec: 2 px ring with 2 px offset. */
+.btn:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(15, 122, 74, 0.25);
+}
 .btn--primary {
   background-color: var(--color-brand-primary);
   color: #fff;

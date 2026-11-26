@@ -116,7 +116,12 @@ export class CircuitBreaker {
  * Import and use these singletons rather than creating new instances.
  */
 export const stellarBreaker = new CircuitBreaker("stellar", {
-  failureThreshold: 3,
+  failureThreshold: 5,
+  resetTimeoutMs: 60_000,
+});
+
+export const sorobanBreaker = new CircuitBreaker("soroban", {
+  failureThreshold: 5,
   resetTimeoutMs: 60_000,
 });
 

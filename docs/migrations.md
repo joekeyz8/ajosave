@@ -19,6 +19,9 @@ npm run migrate
 # Roll back the most recent migration
 npm run migrate:down
 
+# Roll back the last N migrations
+npm run migrate -- --rollback 3
+
 # Create a new migration file
 npm run migrate:create -- --name add-users-kyc-column
 ```
@@ -40,6 +43,11 @@ npm run migrate:create -- --name add-users-kyc-column
 ## Rollback Procedure
 
 `migrate:down` rolls back **one migration at a time** (the most recently applied).
+`npm run migrate -- --rollback N` reverts the last `N` applied migrations in reverse order
+(`--rollback` with no number reverts one). Every migration file must export both `up` and `down`.
+
+CI (`migration-tests` job) applies all migrations to a test database, rolls back the last 3
+and re-applies them, so a broken `down` fails the build.
 
 ### Step-by-step rollback in production
 
@@ -58,7 +66,10 @@ npm run migrate:create -- --name add-users-kyc-column
    psql $DATABASE_URL -c "SELECT id, name, run_on FROM pgmigrations ORDER BY run_on DESC LIMIT 5;"
    ```
 
-4. If multiple steps are needed, repeat step 2 until the desired version is reached.
+4. If multiple steps are needed, roll back several at once:
+   ```bash
+   DATABASE_URL=<prod-url> npm run migrate -- --rollback <N>
+   ```
 
 5. Deploy the previous application version.
 

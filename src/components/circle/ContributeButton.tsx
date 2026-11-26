@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { track } from "@vercel/analytics";
 import { useToast } from "@/components/ui/Toast";
 import { useExchangeRate } from "@/hooks/useExchangeRate";
+import { usePreventDuplicateSubmit } from "@/hooks/usePreventDuplicateSubmit";
 import styles from "./ContributeButton.module.css";
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
   amountNgn: number;
   cycleFrequency: string;
   currentCycle: number;
+  /** Optimistic: initial contribution count shown before the first API round-trip. */
+  initialContributionCount?: number;
 }
 
 /**
@@ -33,8 +36,13 @@ export function ContributeButton({
   amountNgn,
   cycleFrequency,
   currentCycle,
+  initialContributionCount = 0,
 }: Props) {
   const [state, setState] = useState<ContribState>("idle");
+  // Optimistic contribution count — incremented immediately on confirm click,
+  // rolled back to `previousCount` if the API returns an error.
+  const [contributionCount, setContributionCount] = useState(initialContributionCount);
+  const previousCountRef = useRef(initialContributionCount);
   const [feeInfo, setFeeInfo] = useState<{
     authorizationUrl: string;
     platformFee: number;
@@ -79,6 +87,8 @@ export function ContributeButton({
   const rollback = useCallback(
     (message: string) => {
       clearRedirectTimeout();
+      // Revert optimistic count
+      setContributionCount(previousCountRef.current);
       if (mountedRef.current) {
         setState("error");
         const display = message.includes(
@@ -130,52 +140,65 @@ export function ContributeButton({
     };
   }, [state, networkFee, feeError]);
 
-  const handleConfirm = async () => {
-    // Optimistic: immediately move to submitting state
-    setState("submitting");
+  // usePreventDuplicateSubmit guards against double-clicks and replay within
+  // the same session. The idempotency key is forwarded as a request header so
+  // the server can deduplicate concurrent submissions.
+  const { isSubmitting: isDuplicateGuarded, handleSubmit: guardedSubmit } =
+    usePreventDuplicateSubmit(
+      async (idempotencyKey) => {
+        // Optimistic update: increment count before the round-trip
+        previousCountRef.current = contributionCount;
+        setContributionCount((c) => c + 1);
+        setState("submitting");
 
-    try {
-      const res = await fetch(`/api/circles/${circleId}/contribute`, {
-        method: "POST",
-      });
-      const json = await res.json();
+        try {
+          const res = await fetch(`/api/circles/${circleId}/contribute`, {
+            method: "POST",
+            headers: { "Idempotency-Key": idempotencyKey },
+          });
+          const json = await res.json();
 
-      if (!json.success) throw new Error(json.error);
+          if (!json.success) throw new Error(json.error);
 
-      // Track contribution initiation (no PII)
-      try {
-        track("contribution_made", { circleId, amountNgn });
-      } catch {
-        /* analytics failure must never block the UX */
-      }
+          try {
+            track("contribution_made", { circleId, amountNgn });
+          } catch {
+            /* analytics failure must never block the UX */
+          }
 
-      if (!mountedRef.current) return;
+          if (!mountedRef.current) return;
 
-      if (json.data.platformFee > 0) {
-        // Show fee disclosure before redirecting
-        setFeeInfo(json.data);
-        setState("confirming");
-        return;
-      }
+          if (json.data.platformFee > 0) {
+            setFeeInfo(json.data);
+            setState("confirming");
+            return;
+          }
 
-      // Move to redirecting state — set a timeout so we roll back if the
-      // redirect never fires (e.g. popup blocked, network hiccup)
-      setState("redirecting");
-      toast("Redirecting to payment…", "info");
+          setState("redirecting");
+          toast("Redirecting to payment…", "info");
 
-      redirectTimeoutRef.current = setTimeout(() => {
-        if (mountedRef.current) {
-          rollback(
-            "Redirect timed out. Please try again or contact support if the issue persists."
-          );
+          redirectTimeoutRef.current = setTimeout(() => {
+            if (mountedRef.current) {
+              rollback(
+                "Redirect timed out. Please try again or contact support if the issue persists."
+              );
+            }
+          }, REDIRECT_TIMEOUT_MS);
+
+          window.location.href = json.data.authorizationUrl;
+        } catch (err) {
+          rollback(err instanceof Error ? err.message : "Failed to initiate payment");
+          throw err; // re-throw so usePreventDuplicateSubmit can remove the key
         }
-      }, REDIRECT_TIMEOUT_MS);
+      },
+      {
+        onError: () => {
+          /* rollback already handled above */
+        },
+      }
+    );
 
-      window.location.href = json.data.authorizationUrl;
-    } catch (err) {
-      rollback(err instanceof Error ? err.message : "Failed to initiate payment");
-    }
-  };
+  const handleConfirm = () => guardedSubmit();
 
   const handleProceedWithFee = () => {
     if (!feeInfo) return;
@@ -222,7 +245,7 @@ export function ContributeButton({
     );
   }
 
-  const isSubmitting = state === "submitting" || state === "redirecting";
+  const isSubmitting = state === "submitting" || state === "redirecting" || isDuplicateGuarded;
 
   return (
     <>
@@ -252,6 +275,17 @@ export function ContributeButton({
         ) : null}
       </div>
 
+      {/* Optimistic contribution count — increments immediately on submit */}
+      {contributionCount > 0 && (
+        <p
+          className={styles.contribCount}
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {contributionCount} contribution{contributionCount !== 1 ? "s" : ""} this cycle
+        </p>
+      )}
+
       {/* Trigger button — disabled while any async action is in-flight */}
       <Button
         variant="accent"
@@ -259,7 +293,14 @@ export function ContributeButton({
         disabled={isSubmitting}
         aria-haspopup="dialog"
       >
-        {state === "redirecting" ? "Redirecting…" : "Contribute Now"}
+        {isSubmitting ? (
+          <>
+            <span className={styles.spinner} aria-hidden="true" />
+            {state === "redirecting" ? "Redirecting…" : "Processing…"}
+          </>
+        ) : (
+          "Contribute Now"
+        )}
       </Button>
 
       {/* Confirmation modal */}

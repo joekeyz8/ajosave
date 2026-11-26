@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { cancelCircle } from "@/server/services/circle.service";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import type { ApiResponse, Circle } from "@/types";
 
-export const POST = withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
+export const POST = withRouteRateLimit(withErrorHandler(async (_req: NextRequest, ctx: unknown) => {
   const session = await getServerSession(authOptions);
   if (!session?.user) {
     return NextResponse.json<ApiResponse<never>>(
@@ -30,4 +30,4 @@ export const POST = withErrorHandler(async (_req: NextRequest, ctx: unknown) => 
       { status }
     );
   }
-});
+}));

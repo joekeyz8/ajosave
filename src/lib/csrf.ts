@@ -24,6 +24,8 @@ const CSRF_EXEMPT_PATHS: RegExp[] = [
   /^\/api(\/v1)?\/webhooks\//,
   /^\/api(\/v1)?\/kyc\/webhook\/?$/,
   /^\/api(\/v1)?\/auth\/(callback|signin|signout|session|csrf|providers|error)(\/|$)/,
+  // DAST test-session uses its own pre-shared-secret auth, not cookies (#358-#361).
+  /^\/api\/v1\/auth\/test-session\/?$/,
 ];
 
 export function isCsrfExempt(pathname: string): boolean {

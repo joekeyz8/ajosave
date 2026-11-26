@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { hardDeleteExpiredCircles } from "@/server/services/circle.service";
-import { serverConfig } from "@/server/config";
+import { verifyCronSecret } from "@/lib/cron-auth";
 import type { ApiResponse } from "@/types";
 
 /**
@@ -12,19 +12,15 @@ import type { ApiResponse } from "@/types";
  * This endpoint enforces the soft-delete retention policy described in
  * issue #219. It should be scheduled as a daily cron job.
  *
- * Requires a valid CRON_SECRET Bearer token.
+ * Authentication: HMAC-SHA256 signed request via verifyCronSecret.
+ * See src/lib/cron-auth.ts for signing instructions.
  *
  * Query params:
  *   retentionDays  (optional, default 90) — override the retention window.
  */
 export async function GET(req: NextRequest): Promise<NextResponse> {
-  const cronSecret = req.headers.get("authorization")?.replace("Bearer ", "");
-  if (!cronSecret || cronSecret !== serverConfig.cronSecret) {
-    return NextResponse.json<ApiResponse<never>>(
-      { success: false, error: "Unauthorized" },
-      { status: 401 }
-    );
-  }
+  const unauth = await verifyCronSecret(req);
+  if (unauth) return unauth;
 
   const { searchParams } = new URL(req.url);
   const rawDays = searchParams.get("retentionDays");

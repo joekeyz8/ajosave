@@ -112,7 +112,7 @@ describe("POST /api/auth/refresh", () => {
     const setCookieHeader = response.headers.get("set-cookie");
     expect(setCookieHeader).toContain("refreshToken=new_refresh_token");
     expect(setCookieHeader).toContain("HttpOnly");
-    expect(setCookieHeader).toContain("SameSite=Lax");
+    expect(setCookieHeader).toContain("SameSite=Strict");
   });
 
   it("should set secure cookie in production", async () => {

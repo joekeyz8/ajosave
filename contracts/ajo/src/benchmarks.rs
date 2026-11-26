@@ -57,7 +57,7 @@ mod benchmarks {
         let contract_id = env.register_contract(None, AjoContract);
         let client = AjoContractClient::new(&env, &contract_id);
         let interval: u64 = 86400;
-        client.initialize(&admin, &token_id, &100_000_000, &max_members, &interval);
+        client.initialize(&admin, &token_id, &admin, &100_000_000, &max_members, &interval);
 
         Fixture { env, members, client, interval }
     }
@@ -92,6 +92,9 @@ mod benchmarks {
         for m in fx.members.iter() {
             fx.client.join(&m);
         }
+        // `join` already paid cycle 1; measure a cycle-2 contribution.
+        fx.env.ledger().with_mut(|l| l.timestamp = fx.interval + 1);
+        fx.client.payout();
         let m = fx.members.get(0).unwrap();
         measure(&fx.env, "contribute", || {
             fx.client.contribute(&m, &100_000_000);
@@ -103,9 +106,6 @@ mod benchmarks {
         let fx = setup(5);
         for m in fx.members.iter() {
             fx.client.join(&m);
-        }
-        for m in fx.members.iter() {
-            fx.client.contribute(&m, &100_000_000);
         }
         fx.env.ledger().with_mut(|l| l.timestamp = fx.interval + 1);
         measure(&fx.env, "payout", || {

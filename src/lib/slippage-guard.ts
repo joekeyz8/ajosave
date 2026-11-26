@@ -174,3 +174,29 @@ export async function assertSlippage(
 
   return { quote, liveRate };
 }
+
+// ─── Payout amount guard (Issue #462) ───────────────────────────────────────
+
+export class PayoutAmountMismatchError extends Error {
+  constructor(
+    public readonly expected: bigint,
+    public readonly actual: bigint
+  ) {
+    super(`Payout amount mismatch: expected=${expected}, actual=${actual}`);
+    this.name = "PayoutAmountMismatchError";
+  }
+}
+
+/**
+ * Off-chain pre-check run before submitting a payout transaction. Aborts if
+ * the amount the recipient would receive differs from the expected pot.
+ */
+export function assertPayoutAmount(expected: bigint, actual: bigint): void {
+  if (expected !== actual) {
+    logger.warn(
+      { expected: expected.toString(), actual: actual.toString(), event: "PAYOUT_AMOUNT_MISMATCH" },
+      "[SlippageGuard] Payout aborted — amount mismatch"
+    );
+    throw new PayoutAmountMismatchError(expected, actual);
+  }
+}

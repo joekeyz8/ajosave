@@ -145,3 +145,54 @@ export function useQueryInvalidation(): UseQueryInvalidationResult {
 
   return { getQueryVersion, invalidateQuery };
 }
+
+// ---------------------------------------------------------------------------
+// Centralised invalidation helpers (issue #402)
+// ---------------------------------------------------------------------------
+// Import QUERY_KEYS lazily to avoid a circular dependency between
+// queryInvalidation.tsx and queryKeys.ts (queryKeys imports nothing from here).
+
+/**
+ * useCircleInvalidation
+ *
+ * Convenience hook that returns typed helpers for the most common
+ * post-mutation invalidation patterns on the circle detail page.
+ *
+ * Usage (e.g. after joining a circle):
+ *   const { invalidateCircles, invalidateCircle } = useCircleInvalidation();
+ *   invalidateCircle(circleId);   // refreshes detail-level consumers
+ *   invalidateCircles();          // refreshes the circle list
+ */
+export function useCircleInvalidation() {
+  const { invalidateQuery } = useQueryInvalidation();
+
+  /** Invalidates the full circle list (e.g. after creating/joining a circle). */
+  const invalidateCircles = useCallback(() => {
+    invalidateQuery("circles");
+  }, [invalidateQuery]);
+
+  /**
+   * Invalidates both the specific circle and the parent list.
+   * Use after mutations that change circle state (join, early exit, dispute).
+   */
+  const invalidateCircle = useCallback(
+    (circleId: string) => {
+      invalidateQuery("circles", circleId);
+    },
+    [invalidateQuery],
+  );
+
+  /** Invalidates contributions data (e.g. after a new contribution). */
+  const invalidateContributions = useCallback(
+    (contributionId?: string) => {
+      if (contributionId) {
+        invalidateQuery("contributions", contributionId);
+      } else {
+        invalidateQuery("contributions");
+      }
+    },
+    [invalidateQuery],
+  );
+
+  return { invalidateCircles, invalidateCircle, invalidateContributions };
+}

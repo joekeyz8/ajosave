@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { query } from "@/lib/db";
-import { withErrorHandler } from "@/server/middleware";
+import { withErrorHandler, withRouteRateLimit } from "@/server/middleware";
 import type { ApiResponse } from "@/types";
 
 export interface PlatformStats {
@@ -13,7 +13,7 @@ export interface PlatformStats {
   avgCycleDurationDays: number;
 }
 
-export const GET = withErrorHandler(async () => {
+export const GET = withRouteRateLimit(withErrorHandler(async () => {
   const { rows } = await query<PlatformStats>(`
     SELECT
       COUNT(*)::int                                                   AS "totalCircles",
@@ -37,4 +37,4 @@ export const GET = withErrorHandler(async () => {
   `);
 
   return NextResponse.json<ApiResponse<PlatformStats>>({ success: true, data: rows[0] });
-});
+}));

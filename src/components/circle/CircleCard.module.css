@@ -12,6 +12,15 @@
   border-color: var(--color-brand-primary);
 }
 
+/* Ensure keyboard focus on the card's action link is clearly visible.
+   Rendered as a <Link> / <a>, so target the anchor directly. */
+.card a:focus-visible {
+  outline: 2px solid var(--color-brand-primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(15, 122, 74, 0.25);
+  border-radius: var(--radius-md);
+}
+
 .header {
   display: flex;
   align-items: center;

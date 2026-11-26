@@ -67,7 +67,7 @@ mod fuzz {
         // Vary group sizes across the allowed range
         for max_members in [2u32, 3, 5, 10, 20] {
             let contribution: i128 = 50_000_000;
-            let interval: u64 = 3_600; // 1 hour
+            let interval: u64 = 86_400; // 1 day (minimum allowed)
             let ctx = make_ctx(max_members, contribution, interval);
             let Ctx { env, members, token, client, interval, max_members, .. } = &ctx;
 
@@ -155,7 +155,7 @@ mod fuzz {
     /// one ledger before must panic.
     #[test]
     fn fuzz_payout_boundary_timing() {
-        for interval in [1u64, 60, 3_600, 86_400, 2_592_000] {
+        for interval in [86_400u64, 2_592_000] {
             let ctx = make_ctx(2, 100_000_000, interval);
             for m in ctx.members.iter() {
                 ctx.client.join(m);

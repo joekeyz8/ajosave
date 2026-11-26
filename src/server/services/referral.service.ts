@@ -1,3 +1,4 @@
+import logger from "@/lib/logger";
 /**
  * Referral fraud controls service.
  *
@@ -35,6 +36,7 @@ export type ReferralFraudReason =
   | "CODE_DEACTIVATED"
   | "USE_LIMIT_EXCEEDED"
   | "PHONE_ALREADY_REGISTERED"
+  | "SAME_DEVICE"
   | "UNKNOWN";
 
 export class ReferralFraudError extends Error {
@@ -64,6 +66,7 @@ export interface ReferralStats {
 
 const VELOCITY_LIMIT_PER_24H = 5;   // max referrals a referrer can make per 24 h
 const IP_LIMIT_PER_24H = 3;         // max referrals from one IP per 24 h
+const MAX_REFERRAL_STRIKES = 3;     // strikes before a referrer is suspended (Issue #439)
 
 /** Default maximum times a single referral code can be used (Issue #227, configurable via env). */
 function getMaxUses(): number {
@@ -102,7 +105,7 @@ async function logFraudEvent(opts: {
       ]
     );
   } catch (err) {
-    console.error("[referral.service] Failed to write fraud audit log:", err);
+    logger.error("[referral.service] Failed to write fraud audit log:", err);
   }
 }
 
@@ -128,7 +131,7 @@ async function flagSuspiciousPattern(opts: {
       ipAddress: opts.ipAddress ?? undefined,
     });
   } catch (err) {
-    console.error("[referral.service] Failed to write suspicious pattern audit log:", err);
+    logger.error("[referral.service] Failed to write suspicious pattern audit log:", err);
   }
 }
 
@@ -387,14 +390,15 @@ export async function validateReferral(
  * @param referredUserId  The user ID of the person who was referred
  */
 export async function grantReferralReward(referredUserId: string): Promise<void> {
-  await transaction(async (q) => {
+  const outcome = await transaction(async (q) => {
     // Look up the referral record; skip if not found or already rewarded
     const { rows: referralRows } = await q<{
       id: string;
       referrer_id: string;
       rewarded: boolean;
+      flagged_for_review: boolean;
     }>(
-      `SELECT id, referrer_id, rewarded
+      `SELECT id, referrer_id, rewarded, flagged_for_review
        FROM referrals
        WHERE referred_id = $1
        FOR UPDATE`,
@@ -402,7 +406,49 @@ export async function grantReferralReward(referredUserId: string): Promise<void>
     );
 
     const referral = referralRows[0];
-    if (!referral || referral.rewarded) return; // no referral or already rewarded
+    if (!referral || referral.rewarded || referral.flagged_for_review) return null;
+
+    // ── Claim-time fraud checks (Issue #439) ────────────────────────────────
+    const { rows: userRows } = await q<{
+      id: string;
+      phone: string | null;
+      email: string | null;
+      device_fingerprint: string | null;
+      referral_suspended: boolean;
+    }>(
+      `SELECT id, phone, email, device_fingerprint, referral_suspended
+       FROM users WHERE id = ANY($1::varchar[])`,
+      [[referral.referrer_id, referredUserId]]
+    );
+    const referrer = userRows.find((u) => u.id === referral.referrer_id);
+    const referee = userRows.find((u) => u.id === referredUserId);
+    if (!referrer || !referee || referrer.referral_suspended) return null;
+
+    const same = (a: string | null, b: string | null) =>
+      !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+    if (same(referrer.phone, referee.phone) || same(referrer.email, referee.email)) {
+      const { rows: strikeRows } = await q<{ referral_strikes: number }>(
+        `UPDATE users
+         SET referral_strikes = referral_strikes + 1,
+             referral_suspended = (referral_strikes + 1) >= $2
+         WHERE id = $1
+         RETURNING referral_strikes`,
+        [referrer.id, MAX_REFERRAL_STRIKES]
+      );
+      const strikes = strikeRows[0]?.referral_strikes ?? 0;
+      return {
+        fraud: "SELF_REFERRAL" as const,
+        referral,
+        strikes,
+        suspended: strikes >= MAX_REFERRAL_STRIKES,
+      };
+    }
+
+    if (same(referrer.device_fingerprint, referee.device_fingerprint)) {
+      await q(`UPDATE referrals SET flagged_for_review = TRUE WHERE id = $1`, [referral.id]);
+      return { fraud: "SAME_DEVICE" as const, referral, strikes: 0, suspended: false };
+    }
 
     // Mark as rewarded
     await q(
@@ -415,6 +461,32 @@ export async function grantReferralReward(referredUserId: string): Promise<void>
       "UPDATE users SET reputation_score = LEAST(reputation_score + 5, 100) WHERE id = $1",
       [referral.referrer_id]
     );
+    return null;
+  });
+
+  if (!outcome) return;
+
+  const metadata = {
+    stage: "CLAIM",
+    referralId: outcome.referral.id,
+    strikes: outcome.strikes,
+    suspended: outcome.suspended,
+    manualReview: outcome.fraud === "SAME_DEVICE",
+  };
+  await logFraudEvent({
+    referrerId: outcome.referral.referrer_id,
+    suspectUserId: referredUserId,
+    referralCode: null,
+    reason: outcome.fraud,
+    ipAddress: null,
+    metadata,
+  });
+  await flagSuspiciousPattern({
+    actorId: outcome.referral.referrer_id,
+    targetId: referredUserId,
+    reason: outcome.fraud,
+    ipAddress: null,
+    metadata,
   });
 }
 

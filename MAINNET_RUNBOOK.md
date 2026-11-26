@@ -64,3 +64,17 @@ All privileged operations (contract upgrades, treasury withdrawals, parameter ch
 ## Deployment
 
 See `DEPLOYMENT.md` for the deployment sequence.
+
+## Stellar / Soroban Circuit Breakers
+
+All Horizon (`src/lib/stellar.ts`) and Soroban RPC (`src/lib/soroban.ts`) calls run
+through the `stellarBreaker` and `sorobanBreaker` singletons in `src/lib/circuit-breaker.ts`.
+
+- **Threshold:** the circuit opens after 5 consecutive failures (e.g. Horizon 503s).
+- **Open state:** calls fail fast with `CircuitOpenError` for 60 s, then one probe call is allowed (HALF_OPEN). A successful probe closes the circuit; a failed one re-opens it.
+- **Fallback:** while open, write operations are not dropped:
+  - `sendUsdcPayment` queues a `stellar.payment.deferred` outbox event.
+  - `invokeContractPayout` queues a `soroban.payout.deferred` outbox event.
+  The outbox processor (`POST /api/v1/cron/process-outbox`) replays them with exponential backoff; if the circuit is still open the event is retried, and after `OUTBOX_MAX_ATTEMPTS` it moves to the dead-letter queue (`/api/v1/admin/outbox/dead-letter`) for manual replay.
+- **Reads:** `getUsdcBalance` returns `"0"` while open; `getContractEvents` throws and the indexer retries on its next run.
+- **Operator action:** check Horizon/RPC status, then monitor the outbox backlog. Do not manually resubmit deferred payments — replay dead-letter events instead to avoid double payouts.
