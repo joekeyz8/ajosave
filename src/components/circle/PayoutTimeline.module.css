@@ -7,6 +7,10 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  /* Prevent the timeline from ever causing a horizontal scrollbar. */
+  width: 100%;
+  overflow-x: hidden;
+  box-sizing: border-box;
 }
 
 .header {
@@ -307,30 +311,94 @@
   100% { opacity: 0.4; }
 }
 
-/* ─── Mobile breakpoint (≤ 640px) ────────────────────────────────────────── */
+/* ─── Responsive breakpoints ─────────────────────────────────────────────── */
 
-@media (max-width: 640px) {
+/* ≤ 480 px — switch to full vertical stack, eliminate any overflow risk */
+@media (max-width: 480px) {
+  .container {
+    gap: var(--space-3);
+  }
+
+  /* Force the timeline list itself to never exceed its container */
+  .timeline {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  /* Remove the horizontal connecting line on very narrow screens to free space */
+  .timeline::before {
+    display: none;
+  }
+
   .item {
-    /* tighter horizontal padding on small screens */
+    /* Single column: dot above content */
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+    padding: var(--space-2);
+    min-height: 44px;
+    /* Clamp width so it never overflows the viewport */
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Row with dot + member info horizontal inside the column layout */
+  .content {
+    width: 100%;
+  }
+
+  .row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+
+  .memberInfo {
+    max-width: 100%;
+  }
+
+  .memberName {
+    /* Full width — let it wrap rather than overflow */
+    max-width: 100%;
+    white-space: normal;
+    word-break: break-word;
+  }
+
+  .datetime {
+    white-space: normal;
+    word-break: break-word;
+    font-size: var(--text-xs);
+  }
+
+  .tag {
+    font-size: 10px;
+    padding: 1px var(--space-1);
+  }
+
+  .toggleButton {
+    font-size: var(--text-sm);
+  }
+}
+
+/* ≤ 640 px — lighter adjustments for mid-range small screens */
+@media (min-width: 481px) and (max-width: 640px) {
+  .item {
     padding: var(--space-2) var(--space-2);
     gap: var(--space-2);
-    /* ensure 44px minimum for touch */
     min-height: 44px;
   }
 
   .memberName {
-    /* shrink max-width so name truncates gracefully on small screens */
     max-width: 110px;
   }
 
   .datetime {
-    /* allow wrapping on very narrow screens */
     white-space: normal;
     word-break: break-word;
   }
 
   .timeline::before {
-    /* adjust line position for tighter padding */
     left: 1rem;
   }
 
