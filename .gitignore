@@ -6,17 +6,20 @@ node_modules/
 out/
 dist/
 build/
+.vercel/
 
 # ─── Environment files ────────────────────────────────────────────────────────
 .env
 .env.local
 .env.*.local
+.env.production
 
 # ─── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
 # ─── OS & editor artefacts ────────────────────────────────────────────────────
 .DS_Store
@@ -33,6 +36,7 @@ coverage/
 .nyc_output/
 test-results/
 *.test-results/
+junit.xml
 
 # ─── Jest / Vitest snapshots & generated test artifacts ──────────────────────
 # Covers inline `__snapshots__/`, `*.snap`, and any ad-hoc test-snapshot output
