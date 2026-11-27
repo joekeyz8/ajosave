@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useEffect } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import type { Circle } from "@/types";
 import { CircleCard } from "@/components/circle/CircleCard";
 import { ConnectionStatus } from "@/components/ui/ConnectionStatus";
@@ -45,6 +45,14 @@ export function LiveDashboard({ initialCircles }: LiveDashboardProps) {
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [newCirclesCount, setNewCirclesCount] = useState(0);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // Track whether the component has completed its first client-side render.
+  // ConnectionStatus depends on `isConnected` (from usePolling) and `lastUpdate`,
+  // both of which are always undefined/false on the server but change immediately
+  // on the client once polling fires. Rendering ConnectionStatus only after mount
+  // prevents the server HTML snapshot from diverging from the first client paint
+  // and eliminates React hydration mismatch errors (#394).
+  const [isMounted, setIsMounted] = useState(false);
+  const circlesRef = useRef(circles);
 
   const fetchCircles = useCallback(async () => {
     const res = await fetch("/api/circles?filter=mine");
@@ -53,12 +61,17 @@ export function LiveDashboard({ initialCircles }: LiveDashboardProps) {
     return json.data as Circle[];
   }, []);
 
+  // Keep ref in sync so the onSuccess closure always reads the current length
+  // without needing `circles` in its dependency array (which would re-create the
+  // polling interval on every data update).
+  circlesRef.current = circles;
+
   const { isConnected } = usePolling({
     fetchFn: fetchCircles,
     interval: 10000, // Poll every 10 seconds for user dashboard
     enabled: true,
     onSuccess: (data) => {
-      const prevCount = circles.length;
+      const prevCount = circlesRef.current.length;
       const newCount = data.length;
       if (prevCount > 0 && newCount > prevCount) {
         setNewCirclesCount(newCount - prevCount);
@@ -68,6 +81,13 @@ export function LiveDashboard({ initialCircles }: LiveDashboardProps) {
       setLastUpdate(new Date());
     },
   });
+
+  // Signal that the component has completed its first client-side render.
+  // This gates ConnectionStatus so it is never part of the server HTML snapshot,
+  // preventing hydration mismatches caused by isConnected/lastUpdate divergence.
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   useEffect(() => {
     try {
@@ -82,7 +102,13 @@ export function LiveDashboard({ initialCircles }: LiveDashboardProps) {
       <div className={styles.header}>
         <h1 className={styles.title}>My Circles</h1>
         <div className={styles.headerActions}>
-          <ConnectionStatus isConnected={isConnected} lastUpdate={lastUpdate || undefined} />
+          {/* Deferred until after hydration: isConnected and lastUpdate are
+              always false/null on the server but change immediately on the
+              client once usePolling fires, causing a hydration mismatch (#394).
+              Rendering null on first paint matches the server snapshot exactly. */}
+          {isMounted && (
+            <ConnectionStatus isConnected={isConnected} lastUpdate={lastUpdate || undefined} />
+          )}
           <ExportCSVButton />
           <Link href="/circles/create" className="btn btn--accent">
             + New Circle
