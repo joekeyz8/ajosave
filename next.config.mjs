@@ -20,12 +20,30 @@ const securityHeaders = [
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains; preload",
   },
-  // Content-Security-Policy — addresses XSS and data-injection (ZAP HIGH findings)
+  // Content-Security-Policy — addresses XSS and data-injection (ZAP HIGH findings).
+  //
+  // This is the *static* fallback header applied by next.config.mjs.  For every
+  // HTML page response the Next.js middleware (src/middleware.ts) overwrites this
+  // with a stricter per-request nonce-based CSP that uses 'strict-dynamic' and
+  // carries no 'unsafe-eval' or 'unsafe-inline' on script-src.
+  //
+  // 'unsafe-eval' is intentionally removed here (fixes ZAP rule 10055 / HIGH):
+  //   • It was never required by Next.js SSR — it was a leftover from an earlier
+  //     draft.  The middleware-issued nonce CSP has always omitted it.
+  //   • Keeping it in the fallback header would allow eval()-based code execution
+  //     on any path the middleware fails to reach (static export edge cases).
+  //
+  // 'unsafe-inline' on script-src is kept *only* as a no-op legacy fallback:
+  //   • Browsers that honour 'strict-dynamic' (all evergreen engines) ignore
+  //     'unsafe-inline' when 'strict-dynamic' is also present, so the middleware
+  //     CSP is not weakened.
+  //   • It prevents a blank-page flash on the rare browser that supports neither
+  //     nonces nor 'strict-dynamic'.
   {
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-eval' 'unsafe-inline'",
+      "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self'",
